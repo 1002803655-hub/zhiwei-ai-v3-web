@@ -13,6 +13,8 @@ import os
 import re
 import uuid
 from pathlib import Path
+from streamlit_local_storage import LocalStorage
+from lovis_history import STORAGE_KEY, build_snapshot, validate_snapshot, to_bytes
 from typing import Optional
 
 import numpy as np
@@ -88,8 +90,35 @@ def read_uploaded_source(content:bytes, name:str):
 
 def new_chat():
     for key in ("lovis_messages","lovis_conversation_id","lovis_anon_user",
-                "lovis_analysis","lovis_calls","lovis_tool_events"):
+                "lovis_analysis","lovis_calls","lovis_tool_events","lovis_trace_source"):
         st.session_state.pop(key,None)
+    # Prevent a delayed browser read from bringing a deliberately cleared chat back.
+    st.session_state.lovis_history_restored=True
+    st.session_state.lovis_history_dirty=True
+
+
+def apply_saved_chat(saved):
+    st.session_state.lovis_messages=saved["messages"]
+    st.session_state.lovis_conversation_id=saved["conversation_id"]
+    st.session_state.lovis_anon_user=saved["user"]
+    st.session_state.lovis_tool_events=saved["tool_events"]
+    st.session_state.lovis_trace_source=saved["trace_source"]
+    # The rate limit is per active browser session, not for the lifetime of a diagnosis.
+    st.session_state.lovis_calls=0
+    st.session_state.pop("lovis_analysis",None)
+    st.session_state.lovis_history_restored=True
+    st.session_state.lovis_history_dirty=False
+
+
+def get_chat_snapshot():
+    return build_snapshot(
+        st.session_state.get("lovis_messages",[]),
+        st.session_state.get("lovis_anon_user",""),
+        st.session_state.get("lovis_conversation_id",""),
+        st.session_state.get("lovis_tool_events",[]),
+        st.session_state.get("lovis_trace_source",""),
+        st.session_state.get("lovis_calls",0),
+    )
 
 
 def wants_vibration_analysis(question:str)->bool:
@@ -177,6 +206,25 @@ if "lovis_conversation_id" not in st.session_state:
 if "lovis_tool_events" not in st.session_state:
     st.session_state.lovis_tool_events=[]
 
+# Persistent browser history is local to this browser and this Streamlit origin.
+# A separate portable JSON export/import works even if third-party storage is blocked.
+try:
+    lovis_storage=LocalStorage()
+    raw_browser_chat=lovis_storage.getItem(STORAGE_KEY,key="lovis_history_auto_read")
+    if (not st.session_state.get("lovis_history_restored",False)
+            and not st.session_state.get("lovis_history_dirty",False)
+            and raw_browser_chat is not None):
+        try:
+            apply_saved_chat(validate_snapshot(raw_browser_chat))
+            st.rerun()
+        except (ValueError,TypeError):
+            st.session_state.lovis_storage_note="浏览器中的旧会话格式无效；可使用JSON备份恢复。"
+            st.session_state.lovis_history_restored=True
+    if st.session_state.pop("lovis_history_dirty",False):
+        lovis_storage.setItem(STORAGE_KEY,get_chat_snapshot())
+except Exception:
+    st.session_state.lovis_storage_note="当前浏览器未能启用自动保存；请使用会话JSON备份。"
+
 # Sidebar is optional context. It does not automatically call any algorithm.
 current_signal:Optional[np.ndarray]=None
 current_meta=None
@@ -188,12 +236,35 @@ with st.sidebar:
     if st.button("＋ 开始新会话",use_container_width=True):
         new_chat()
         st.rerun()
-    with st.expander("会话历史（当前浏览器）",expanded=False):
+    with st.expander("会话记录与恢复",expanded=False):
         messages=st.session_state.get("lovis_messages",[])
         for m in [x for x in messages if x["role"]=="user"][-6:]:
             st.caption("· "+m["content"][:70])
         if not messages:
             st.caption("暂无提问记录")
+        st.caption("同一浏览器自动尝试恢复最近一次会话；清除浏览器数据或换设备可能导致记录丢失。")
+        if st.session_state.get("lovis_storage_note"):
+            st.warning(st.session_state["lovis_storage_note"])
+        st.download_button(
+            "⬇ 导出会话备份（私密JSON）",
+            data=to_bytes(get_chat_snapshot()),file_name="lovis_chat_backup.json",
+            mime="application/json",use_container_width=True,
+        )
+        backup=st.file_uploader("导入此前保存的Lovis会话JSON",type=["json"],
+                                key="lovis_history_import_file")
+        if st.button("恢复上传的会话",disabled=backup is None,
+                     use_container_width=True):
+            try:
+                if backup.size>400000:
+                    raise ValueError("备份文件过大")
+                validated=validate_snapshot(backup.getvalue().decode("utf-8"))
+                apply_saved_chat(validated)
+                st.session_state.lovis_history_dirty=True
+                st.rerun()
+            except (ValueError,UnicodeDecodeError) as exc:
+                st.error("恢复失败："+str(exc))
+        st.caption("备份包含历史提问及Dify会话标识，请勿公开分享。")
+        st.caption("网页不会长期存储上传的MAT、原始波形或计算结果；重新打开后可能需要重新关联数据。")
     st.divider()
     st.markdown("**关联数据（可选）**")
     source=st.radio("数据来源",["暂不关联","CWRU内置示例","上传MAT文件"],label_visibility="collapsed")
@@ -351,6 +422,8 @@ if message:
                 except DifyBridgeError as exc:
                     st.session_state.lovis_messages.append({
                         "role":"assistant","content":(local_msg+"\n\n" if local_msg else "")+"Dify调用失败："+str(exc)})
+        st.session_state.lovis_history_restored=True
+        st.session_state.lovis_history_dirty=True
         st.rerun()
 
 # Compact, conditional evidence zone: do not make analytic widgets the homepage.
