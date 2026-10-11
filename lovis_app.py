@@ -210,7 +210,7 @@ if "lovis_tool_events" not in st.session_state:
 # A separate portable JSON export/import works even if third-party storage is blocked.
 try:
     lovis_storage=LocalStorage()
-    raw_browser_chat=lovis_storage.getItem(STORAGE_KEY,key="lovis_history_auto_read")
+    raw_browser_chat=lovis_storage.getItem(STORAGE_KEY)
     if (not st.session_state.get("lovis_history_restored",False)
             and not st.session_state.get("lovis_history_dirty",False)
             and raw_browser_chat is not None):
@@ -222,8 +222,10 @@ try:
             st.session_state.lovis_history_restored=True
     if st.session_state.pop("lovis_history_dirty",False):
         lovis_storage.setItem(STORAGE_KEY,get_chat_snapshot())
-except Exception:
-    st.session_state.lovis_storage_note="当前浏览器未能启用自动保存；请使用会话JSON备份。"
+except Exception as exc:
+    st.session_state.lovis_storage_note=(
+        "浏览器自动保存暂不可用（"+type(exc).__name__+"），请先使用会话JSON备份。"
+    )
 
 # Sidebar is optional context. It does not automatically call any algorithm.
 current_signal:Optional[np.ndarray]=None
