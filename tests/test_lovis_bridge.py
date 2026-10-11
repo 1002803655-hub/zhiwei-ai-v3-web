@@ -2,7 +2,7 @@
 """Safe mocked tests. Do not call live Dify or download CWRU datasets."""
 import json
 import unittest
-from lovis_bridge import ask_lovis, combine_question_with_vibration, vibration_summary
+from lovis_bridge import ask_lovis, combine_question_with_vibration, vibration_summary, get_message_tool_events
 
 
 class FakeResponse:
@@ -28,6 +28,43 @@ class FakeClient:
         return FakeResponse()
 
 
+
+class NoEventResponse(FakeResponse):
+    def iter_lines(self, decode_unicode=True):
+        for obj in [
+            {"event":"message","answer":"已完成诊断","conversation_id":"conv-123"},
+            {"event":"message_end","message_id":"msg-456","conversation_id":"conv-123"},
+        ]:
+            yield "data: "+json.dumps(obj,ensure_ascii=False)
+
+
+class HistoryResponse:
+    status_code=200
+    def __init__(self, match=True):
+        self.match=match
+    def json(self):
+        return {"data":[{"id":"msg-456" if self.match else "other-msg",
+                "agent_thoughts":[
+                    {"tool":"motor_trend_analysis_v23;motor_knowledge_search",
+                     "thought":"CONFIDENTIAL REASONING"},
+                    {"tool":""}]}]}
+
+
+class HistoryClient(FakeClient):
+    def __init__(self,match=True):
+        self.match=match
+        self.get_called=0
+    def post(self,*args,**kwargs):
+        self.payload=kwargs.get("json")
+        return NoEventResponse()
+    def get(self,url,headers=None,params=None,timeout=None):
+        self.get_called+=1
+        assert url=="https://api.dify.ai/v1/messages"
+        assert params["conversation_id"]=="conv-123"
+        assert params["user"]=="visitor-1"
+        return HistoryResponse(self.match)
+
+
 class BridgeTests(unittest.TestCase):
     def test_sse_roundtrip_and_context(self):
         fake=FakeClient()
@@ -40,6 +77,22 @@ class BridgeTests(unittest.TestCase):
                   conversation_id=result["conversation_id"],session=fake)
         self.assertEqual(fake.payload["conversation_id"],"conv-123")
         self.assertEqual(fake.payload["query"],"请继续")
+
+    def test_persisted_message_tool_fallback(self):
+        fake=HistoryClient()
+        result=ask_lovis("请求趋势分析","TEST_ONLY",user="visitor-1",session=fake)
+        self.assertEqual(result["tool_events"],["motor_trend_analysis_v23","motor_knowledge_search"])
+        self.assertEqual(result["tool_trace_source"],"Dify已保存消息的工具记录")
+        self.assertEqual(fake.get_called,1)
+        self.assertNotIn("CONFIDENTIAL",str(result))
+
+    def test_no_tools_claimed_for_different_message_id(self):
+        fake=HistoryClient(match=False)
+        result=ask_lovis("请分析","TEST_ONLY",user="visitor-1",session=fake)
+        self.assertEqual(result["tool_events"],[])
+        self.assertEqual(result["tool_trace_source"],"未返回工具记录")
+        self.assertEqual(get_message_tool_events("TEST_ONLY",user="visitor-1",
+            conversation_id="conv-123",message_id="msg-456",session=fake),[])
 
     def test_summary_redacts_source(self):
         meta={"name":"secret_filename.mat","raw_sha256":"PRIVATEHASH","source_url":"file:///private/secret",
