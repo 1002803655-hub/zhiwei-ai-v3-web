@@ -215,8 +215,15 @@ with st.sidebar:
             st.caption("所选类别为实验台标签，不是模型预测。")
     elif source=="上传MAT文件":
         f=st.file_uploader("选择振动MAT",type=["mat"])
-        hz=st.selectbox("原始采样率（必须与数据一致）",[12000,48000],
-                        format_func=lambda a:f"{a:,} Hz")
+        # CWRU Normal Baseline 97-100 is recorded at 48 kHz.
+        # Filename is only a hint: non-official or modified uploads still require confirmation.
+        known_cwru_normal=bool(f is not None and re.fullmatch(r"(97|98|99|100)\\.mat",f.name,re.I))
+        hz=st.selectbox("原始采样率（须与文件真实采样率一致）",[12000,48000],
+                        index=1 if known_cwru_normal else 0,
+                        format_func=lambda a:f"{a:,} Hz",
+                        key="lovis_sample_rate_"+(f.name if f is not None else "none"))
+        if known_cwru_normal:
+            st.caption("检测到CWRU正常组文件名：已预选48 kHz；请核对来源后再分析。")
         if f is not None:
             content=f.getvalue()
             if len(content)>25*1024*1024:
