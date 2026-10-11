@@ -217,7 +217,7 @@ with st.sidebar:
         f=st.file_uploader("选择振动MAT",type=["mat"])
         # CWRU Normal Baseline 97-100 is recorded at 48 kHz.
         # Filename is only a hint: non-official or modified uploads still require confirmation.
-        known_cwru_normal=bool(f is not None and re.fullmatch(r"(97|98|99|100)\\.mat",f.name,re.I))
+        known_cwru_normal=bool(f is not None and re.fullmatch(r"(97|98|99|100)\.mat",f.name,re.I))
         hz=st.selectbox("原始采样率（须与文件真实采样率一致）",[12000,48000],
                         index=1 if known_cwru_normal else 0,
                         format_func=lambda a:f"{a:,} Hz",
