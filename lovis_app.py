@@ -284,7 +284,7 @@ for msg in st.session_state.lovis_messages:
     with st.chat_message(msg["role"],avatar="🤖" if msg["role"]=="assistant" else "👤"):
         st.markdown(msg["content"])
         if msg.get("tools"):
-            st.caption("Dify返回工具事件："+", ".join(msg["tools"]))
+            st.caption("Dify已核验工具调用："+", ".join(msg["tools"])+"｜来源："+msg.get("tool_trace_source","Dify工具记录"))
 
 question=st.chat_input("向Lovis描述问题、追加运行信息，或请求分析已关联的振动数据…")
 message=question or example_text
@@ -339,9 +339,12 @@ if message:
                     if response.get("conversation_id"):
                         st.session_state.lovis_conversation_id=response["conversation_id"]
                     events=response.get("tool_events",[])
+                    trace_source=response.get("tool_trace_source","未返回工具记录")
                     st.session_state.lovis_tool_events=events
+                    st.session_state.lovis_trace_source=trace_source
                     st.session_state.lovis_messages.append({
-                        "role":"assistant","content":response["answer"],"tools":events})
+                        "role":"assistant","content":response["answer"],"tools":events,
+                        "tool_trace_source":trace_source})
                     if current_analysis and current_analysis.get("identity")==identity:
                         current_analysis["ai_answer"]=response["answer"]
                         current_analysis["tool_events"]=events
@@ -364,8 +367,9 @@ if st.session_state.get("lovis_messages"):
         if analysis and analysis.get("identity")==identity:
             st.write("✅ 网页后端Python振动分析：用户请求触发；不是Dify工具调用。")
         if events:
-            for event in events:
-                st.write("✅ Dify返回的工具事件："+event)
+            st.caption("证据来源："+st.session_state.get("lovis_trace_source","Dify提供的工具记录"))
+            for n,event in enumerate(events,1):
+                st.write(f"✅ Dify已记录的工具调用 {n}："+event)
         else:
-            st.write("当前轮未收到可直接展示的Dify工具事件；可在Dify运行日志中复核。")
+            st.write("当前轮Dify服务API未提供可核验的工具记录（不等于没有执行）；请到Dify运行日志核对，网页不会凭回答文字伪造调用。")
 st.caption("🔗 现有已验收的V3.0网页继续保持运行：https://zhiwei-ai-v3-web.streamlit.app")
