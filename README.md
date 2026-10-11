@@ -1,36 +1,27 @@
-# 智维AI V3.0 · 工业电机振动分析网页（第一阶段）
+# 智维AI V3.0 — Dify Agent 接入补丁
 
-**目前仅支持真实振动信号时域/FFT分析与可追溯报告；尚无故障分类模型、没有Dify集成。**
+更新四个文件到 GitHub 仓库根目录：`app.py`, `dify_bridge.py`, `requirements.txt`；README 为说明，非必须上传。
 
-## 在线部署
+本补丁基于上一版已完成 Random Forest 集成的 app.py 制作，不需要改动模型、特征算法、CWRU样本下载、其他文件。
 
-1. 把本目录内的文件（不是最外层文件夹）上传到公开GitHub仓库根目录。
-2. 前往 <https://share.streamlit.io/>，登录GitHub，选择仓库的`main`分支及入口`app.py`。
-3. 等待安装依赖、网页启动。**第一次访问会由服务器向CWRU官方链接获取4份MAT文件**，生成临时内置样本；可能需1分钟。
-4. 浏览器里选内置示例或上传合法MAT文件，点击“开始分析”。若官方端点暂时不可用，上传MAT文件模式仍可使用。
+## 部署
 
-> 不将原始CWRU数据或剪裁重封装数据提交到GitHub，避免在再分发许可未查明前公开重新分发。远程下载行为遵循官方站点要求，并标注数据来源；如官方站点限制自动下载，请遵守其要求并取得许可。
+1. 先在 GitHub 仓库上传 `app.py`, `dify_bridge.py`, `requirements.txt`，覆盖已有同名文件。
+2. Streamlit Cloud 的应用页面右下角 **Manage app** → 菜单 **Settings** → **Secrets**，添加两行 TOML 配置（如果有原配置，保留并在末尾追加）：
 
-## 数据与能力边界
+   ```toml
+   DIFY_API_KEY = "app-这里填自己刚创建的完整密钥"
+   DIFY_API_BASE = "https://api.dify.ai/v1"
+   ```
 
-- CWRU: <https://engineering.case.edu/bearingdatacenter/download-data-file>
-- 97.mat正常源记录48kHz；105/118/130.mat为12kHz，程序统一处理为12kHz。
-- 本阶段`正常/内圈/滚动体/外圈`均为官方已知标签，不是模型的预测。
-- 4096点窗口计算RMS、峭度、峰值因子及FFT，数值属于描述性统计，不是故障确诊/报警指标。
-- 公开实验台数据，不代表现场工业电机诊断准确率。
+3. 保存后等待云端重新部署/重启。请勿提交 `.streamlit/secrets.toml`、API密钥或含密钥的截图。
+4. 打开公网地址、选择105.mat→开始分析→勾选同意传送脱敏摘要→点击“使用Dify生成专业解释”，确认出现实际生成的文本。
+5. 下载HTML报告，检查是否包含AI解释段落；前往Dify日志核实本次是否确实使用了`motor_knowledge_search`。
 
-## 本地启动（Python 3.10+）
+## 隐私和可靠性
 
-`py -3 -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
-
-`py -3 -m streamlit run app.py`
-
-首次运行需要从学校网站下载原始MAT文件；已有的MAT文件也可以事先放进`data`目录，或者从网页直接上传MAT进行分析。
-
-## 代码结构
-
-- `app.py`: Streamlit页面、报告下载
-- `signal_core.py`: 数据解析、采样率转换、FFT和时域特征
-- `online_samples.py`: 可选的服务器端官方数据获取（不在GitHub托管数据）
-- `prepare_demo.py`: 从官方MAT源制作暂存示例并记录SHA-256
-- `requirements.txt`: 环境依赖
+- 只发送提取的少量数值、投票结果和必要的来源类型标记；不发送原始文件、采样序列、文件名或SHA-256。
+- 使用Dify Chatflow `POST /chat-messages`的streaming模式；服务端解析SSE，检测异常/结束。不会在网页或日志中打印API key。
+- API失败不影响原有的波形、FFT、分类和报告下载。HTML报告包含AI解释（如果实际请求成功），文字经过HTML转义。
+- Streamlit公开应用在服务端持有密钥，存在被外部用户反复发起请求造成费用的风险。当前示例仅做每个Streamlit会话最多3次软限制，**不是严格防刷机制**。参赛前应核查Dify配额/预算并监控用量；若流量较高，应使用有认证与全局限流的托管方案。
+- 不保证Dify知识工具每次都实际执行；最终须以Dify应用日志和现场安全边界核验。

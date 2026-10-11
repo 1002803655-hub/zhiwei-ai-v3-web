@@ -7,6 +7,8 @@ import hashlib
 import html
 import io
 import json
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import streamlit as st
 
 from online_samples import ensure_demo_assets
 from ml_inference import predict_signal, verified_model, MODEL_SHA256, CLASS_CN
+from dify_bridge import build_explanation_query, call_dify, DifyBridgeError
 
 from signal_core import (
     ANALYSIS_FS, DATA_SOURCE, WINDOW, extract_features, load_builtin_assets,
@@ -61,7 +64,7 @@ def _encode_matplotlib_graph(x, y, xlabel, ylabel, title) -> str:
     return base64.b64encode(out.getvalue()).decode('ascii')
 
 
-def render_html_report(meta: dict, res: dict, offset: int, classification: dict | None = None) -> bytes:
+def render_html_report(meta: dict, res: dict, offset: int, classification: dict | None = None, ai_explanation: dict | None = None) -> bytes:
     def clean(x): return html.escape(str(x),quote=True)
     # Matplotlib may lack CJK glyphs in Windows/Cloud environments; use English text
     # inside rendered PNGs. Chinese headings in the surrounding HTML remain intact.
@@ -87,12 +90,20 @@ def render_html_report(meta: dict, res: dict, offset: int, classification: dict 
         inferred=f'''<article><h2>实验性Random Forest模型预测</h2><p><strong>预测：</strong>{clean(pred_name)}；使用{clean(classification.get('windows_evaluated',0))}个非重叠2048点窗口。</p><table>{vote_html}</table><p>冻结模型SHA-256：<code>{clean(classification.get('model_sha256',''))}</code></p><p>训练使用CWRU 0HP文件；内置0HP演示样本来自训练源文件，不属于独立测试。1/2/3HP评测来自同一实验台的有限原始文件，不能视为工业现场故障诊断性能。投票比例不是故障概率。</p></article>'''
     else:
         inferred='<article><h2>模型预测</h2><p>模型不可用，本次仅完成描述性振动分析。</p></article>'
-    doc=f'''<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>智维AI 振动分析报告</title><style>body{{font:15px/1.55 system-ui,'Microsoft YaHei',sans-serif;margin:0;background:#f1f5f9;color:#172b4d}}main{{max-width:970px;margin:auto;padding:32px}}article{{background:white;border:1px solid #e5e9f0;border-radius:12px;padding:25px;margin:18px 0}}h1{{font-size:25px}}h2{{font-size:19px}}img{{width:100%;max-width:900px}}table{{width:100%;border-collapse:collapse}}td{{padding:9px;border-bottom:1px solid #edf0f5}}td:first-child{{width:34%}}.note{{background:#fff8e8;padding:12px;border-radius:8px}}</style></head><body><main><h1>智维AI V3.0 · 振动信号分析报告</h1><p>生成时间（UTC）：{clean(datetime.now(timezone.utc).isoformat())}</p><article><h2>计算结果</h2><table>{table}</table><p>FFT采用去均值、周期Hann窗与单边幅值谱；均取{WINDOW}个点。</p></article>{inferred}<article><h2>真实采样片段时域波形</h2><img alt="波形" src="data:image/png;base64,{img1}"><h2>FFT频谱</h2><img alt="FFT" src="data:image/png;base64,{img2}"></article><article><h2>证据来源</h2><table>{tags_html}</table></article><article class="note"><strong>关键限制：</strong>上方RMS、峭度、频谱等数值属于描述性时域/频域特征，不能直接作为设备报警值。网页内置数据的已知标签来自CWRU官方实验台文件，并非模型预测。模型训练和验证来自有限的CWRU实验台人工缺陷数据，不能代表真实生产设备故障确诊或现场可靠性。振动数据原始幅值未作工程单位校准。</article></main></body></html>'''
+    if ai_explanation and ai_explanation.get('answer'):
+        safe_ai = clean(ai_explanation['answer']).replace('\n','<br>')
+        ai_article = ("<article><h2>Dify AI辅助解释（非现场故障确诊）</h2>"
+                      + "<div style='white-space:normal;line-height:1.8'>" + safe_ai + "</div>"
+                      + "<p>本段由Dify Agent依据外部算法摘要生成。是否调用知识库应以Dify运行追踪为准；"
+                      + "若无确切知识库证据，不能据此推断已完成资料检索。</p></article>")
+    else:
+        ai_article = '<article><h2>AI辅助解释</h2><p>本次未调用Dify，本报告仍可独立复核数值分析结果。</p></article>'
+    doc=f'''<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>智维AI 振动分析报告</title><style>body{{font:15px/1.55 system-ui,'Microsoft YaHei',sans-serif;margin:0;background:#f1f5f9;color:#172b4d}}main{{max-width:970px;margin:auto;padding:32px}}article{{background:white;border:1px solid #e5e9f0;border-radius:12px;padding:25px;margin:18px 0}}h1{{font-size:25px}}h2{{font-size:19px}}img{{width:100%;max-width:900px}}table{{width:100%;border-collapse:collapse}}td{{padding:9px;border-bottom:1px solid #edf0f5}}td:first-child{{width:34%}}.note{{background:#fff8e8;padding:12px;border-radius:8px}}</style></head><body><main><h1>智维AI V3.0 · 振动信号分析报告</h1><p>生成时间（UTC）：{clean(datetime.now(timezone.utc).isoformat())}</p><article><h2>计算结果</h2><table>{table}</table><p>FFT采用去均值、周期Hann窗与单边幅值谱；均取{WINDOW}个点。</p></article>{inferred}{ai_article}<article><h2>真实采样片段时域波形</h2><img alt="波形" src="data:image/png;base64,{img1}"><h2>FFT频谱</h2><img alt="FFT" src="data:image/png;base64,{img2}"></article><article><h2>证据来源</h2><table>{tags_html}</table></article><article class="note"><strong>关键限制：</strong>上方RMS、峭度、频谱等数值属于描述性时域/频域特征，不能直接作为设备报警值。网页内置数据的已知标签来自CWRU官方实验台文件，并非模型预测。模型训练和验证来自有限的CWRU实验台人工缺陷数据，不能代表真实生产设备故障确诊或现场可靠性。振动数据原始幅值未作工程单位校准。</article></main></body></html>'''
     return doc.encode('utf-8')
 
 
 st.title('⚙️ 智维AI V3.0 · 振动信号分析工作台')
-st.caption('真实实验台数据 · 确定性信号计算 · 可追溯报告｜已接入经过文件级隔离实验验证的探索性Random Forest分类模型；尚未接入Dify')
+st.caption('真实实验台数据 · 确定性信号计算 · 探索性Random Forest分类 · Dify工业知识辅助解释（需云端密钥配置）')
 
 @st.cache_resource(show_spinner='首次加载演示数据：正在从CWRU官方地址获取真实测量记录，可能需要1分钟…')
 def _load_demo():
@@ -145,6 +156,11 @@ with st.sidebar:
                             'source_fs_hz':src_fs,'analysis_fs_hz':ANALYSIS_FS,'rpm':rpm,
                             'raw_sha256':hashlib.sha256(content).hexdigest(),'label':'未知（用户上传）',
                             'source_variable':key}
+                    if manifest and manifest.get('samples'):
+                        meta['is_training_source'] = any(
+                            str(s.get('raw_sha256')) == meta['raw_sha256'] and s.get('load_hp') == 0
+                            for s in manifest['samples']
+                        )
                     st.success(f'成功读取变量{key}，共{len(x):,}个原始采样点。')
                 except Exception as exc:
                     st.error(f'MAT文件无法读取：{exc}')
@@ -161,7 +177,7 @@ with st.sidebar:
     st.caption('✅ 真实数据读取及频谱计算')
     st.caption('✅ 证据与HTML报告下载')
     st.caption('✅ 实验性Random Forest四分类模型（CWRU限定）')
-    st.caption('⏳ Dify工业知识Agent集成（待开发）')
+    st.caption('✅ Dify工业知识Agent接口（需单独配置Secrets并验收）')
 
 if start and signal is not None and meta is not None:
     try:
@@ -223,11 +239,53 @@ else:
         if evidence.get('label_code'):
             known=str(evidence['label_code'])
             st.info(f"官方已知数据标签：{CLASS_CN.get(known,known)}；模型预测：{pred['predicted_label']}。两者必须分开理解。")
-        if evidence.get('load_hp')==0 and evidence.get('source_known_label_not_prediction'):
+        if evidence.get('is_training_source') or (evidence.get('load_hp')==0 and evidence.get('source_known_label_not_prediction')):
             st.warning('这份0HP演示数据属于模型的训练来源：可用于验证网页推理能否运行，但不属于独立模型评测。')
         else:
             st.caption('模型未见过的文件仍应属于CWRU相同实验台/缺陷类型；不能据此确认现实工厂中的故障。')
         st.caption('本模型由0HP数据训练；1HP、2HP和3HP来自固定模型的实验台测试（每HP四份源文件，各96个测试窗口均预测正确）。这些窗口相关，且采样条件有潜在混杂，不是工业现场准确率。投票比例不是故障概率。')
+
+    # External LLM explanation is optional. The browser never receives the API key
+    # or raw waveform; only bounded, de-identified summary is sent to Dify by server.
+    st.subheader('AI综合辅助解释 · Dify工业知识Agent')
+    st.caption('可选调用：只向Dify发送特征摘要、模型预测与窗口票数；不发送MAT文件、原始信号、文件名或SHA-256。')
+    try:
+        dify_key = st.secrets.get('DIFY_API_KEY', '')
+        dify_base = st.secrets.get('DIFY_API_BASE', 'https://api.dify.ai/v1')
+    except (FileNotFoundError, KeyError):
+        dify_key, dify_base = '', 'https://api.dify.ai/v1'
+    dify_key = str(dify_key or os.environ.get('DIFY_API_KEY', '')).strip()
+    if not dify_key:
+        st.info('Dify AI接口尚未配置。请在Streamlit Cloud应用设置的Secrets里添加DIFY_API_KEY；波形、分类、报告下载不受影响。')
+    elif pred is None or pred.get('status') != 'predicted':
+        st.info('本次暂无唯一有效的分类预测，不发送AI分类解释。')
+    else:
+        consent_key='consent_dify_'+hashlib.sha256(repr(selection_identity).encode('utf-8')).hexdigest()[:16]
+        ai_consent=st.checkbox('我同意将本次脱敏计算摘要发送到Dify Cloud用于生成辅助解释；不会上传原始MAT文件。',value=False,key=consent_key)
+        if 'dify_calls_this_session' not in st.session_state:
+            st.session_state['dify_calls_this_session']=0
+        used=st.session_state['dify_calls_this_session']
+        if used>=3 and not last.get('dify_explanation'):
+            st.info('本浏览器会话已达到3次AI调用演示上限。其他分析功能仍可用。')
+        clicked=st.button('✨ 使用Dify生成专业解释',disabled=(not ai_consent or used>=3 or bool(last.get('dify_explanation'))))
+        if clicked:
+            if 'dify_anonymous_user' not in st.session_state:
+                st.session_state['dify_anonymous_user']='zhiwei-v3-'+uuid.uuid4().hex[:24]
+            st.session_state['dify_calls_this_session'] += 1
+            with st.spinner('Dify正在检索工业知识并生成解释，可能需要几十秒…'):
+                try:
+                    query=build_explanation_query(evidence,res,pred)
+                    ai=call_dify(query,dify_key,api_base=str(dify_base),user=st.session_state['dify_anonymous_user'])
+                    last['dify_explanation']=ai
+                    last.pop('dify_error',None)
+                except DifyBridgeError as exc:
+                    last['dify_error']=str(exc)
+        if last.get('dify_error'):
+            st.error('AI辅助解释失败：'+last['dify_error'])
+        if last.get('dify_explanation'):
+            st.markdown(last['dify_explanation']['answer'])
+            st.caption('这是Dify自动生成的辅助说明，不代表现场确诊；是否实际检索知识库，应到Dify日志核对工具调用。')
+            st.caption('若需再次分析，请修改数据或重新点击左侧“开始分析”。')
 
     with st.expander('模型评测证据与适用范围（可下载）'):
         evidence_path = ROOT / 'evaluation_evidence.json'
@@ -266,12 +324,13 @@ else:
             st.link_button('访问CWRU数据文件',evidence['source_url'])
         st.warning('模型为CWRU实验台0HP训练的探索性四分类器。尚无工业报警阈值或工业现场故障标签评估；不用于自动停机。')
     with t2:
-        report = render_html_report(evidence,res,o,last.get('classification'))
+        report = render_html_report(evidence,res,o,last.get('classification'),last.get('dify_explanation'))
         st.download_button('⬇ 下载完整HTML分析报告',data=report,file_name='zhiwei_v30_vibration_report.html',mime='text/html',use_container_width=True)
         data = {k:(float(v) if isinstance(v,(int,float,np.floating)) else v) for k,v in res.items() if not isinstance(v,np.ndarray)}
         data.update({'source_metadata':evidence,'window_offset':o,'window_samples':WINDOW,
                      'analysis_fs_hz':ANALYSIS_FS,'classification_status':'model_predicted' if last.get('classification') else 'model_unavailable',
-                     'model_result':last.get('classification'), 'model_sha256':MODEL_SHA256})
+                     'model_result':last.get('classification'), 'model_sha256':MODEL_SHA256,
+                     'dify_explanation':last.get('dify_explanation')})
         st.download_button('⬇ 下载结构化计算结果(JSON)',data=json.dumps(data,ensure_ascii=False,indent=2,default=str).encode('utf-8'),
                            file_name='zhiwei_v30_evidence.json',mime='application/json',use_container_width=True)
         st.caption('下载报告包含自带的图片，不依赖网页运行；结构化结果供进一步复核。')
