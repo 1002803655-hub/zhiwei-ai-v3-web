@@ -15,6 +15,64 @@ MAX_REPLY=16000
 MAX_QUERY=8000
 
 
+
+def _verified_tool_names(raw) -> list[str]:
+    """Extract only provider-declared tool names, never answer text or LLM thoughts."""
+    if not isinstance(raw, str):
+        return []
+    found = []
+    for candidate in re.split(r"[,;\n]+", raw):
+        name = candidate.strip()
+        if name and re.fullmatch(r"[\w./:-]{1,100}", name) and name not in found:
+            found.append(name)
+    return found
+
+
+def get_message_tool_events(
+    key: str, *, user: str, conversation_id: str, message_id: str,
+    api_base: str = DEFAULT_API_BASE, session=None,
+) -> list[str]:
+    """Best-effort fallback to persisted Dify message metadata.
+
+    Not all Chatflow Agent nodes expose tool events through their public API.
+    An exact message ID match is required; otherwise emit no claims.
+    """
+    if not conversation_id or not message_id or not user:
+        return []
+    sender = session if session is not None else requests
+    try:
+        response = sender.get(
+            api_base.rstrip("/") + "/messages",
+            headers={"Authorization": "Bearer " + str(key).strip()},
+            params={"user": user, "conversation_id": conversation_id, "limit": 10},
+            timeout=(5, 8),
+        )
+        if response.status_code != 200:
+            return []
+        payload = response.json()
+        if not isinstance(payload, dict):
+            return []
+        items = payload.get("data")
+        if not isinstance(items, list):
+            return []
+        for item in items:
+            if not isinstance(item, dict) or item.get("id") != message_id:
+                continue
+            thoughts = item.get("agent_thoughts")
+            if not isinstance(thoughts, list):
+                return []
+            names: list[str] = []
+            for event in thoughts:
+                if isinstance(event, dict):
+                    for name in _verified_tool_names(event.get("tool")):
+                        if name not in names:
+                            names.append(name)
+            return names
+    except (requests.exceptions.RequestException, ValueError, TypeError, AttributeError):
+        return []
+    return []
+
+
 def ask_lovis(query: str, key: str, *, user: str, conversation_id: str = "",
               api_base: str = DEFAULT_API_BASE, session=None) -> dict:
     if not str(key or "").strip():
@@ -81,12 +139,9 @@ def ask_lovis(query: str, key: str, *, user: str, conversation_id: str = "",
                 elif kind == "agent_thought":
                     # This is a provider-supplied *tool event*, not the private
                     # reasoning of the LLM; never render its 'thought' content.
-                    tool = obj.get("tool")
-                    if isinstance(tool,str) and tool.strip():
-                        for candidate in re.split(r"[,;\n]+", tool):
-                            t = candidate.strip()[:100]
-                            if t and re.fullmatch(r"[\w./:-]{1,100}",t) and t not in reported_tools:
-                                reported_tools.append(t)
+                    for t in _verified_tool_names(obj.get("tool")):
+                        if t not in reported_tools:
+                            reported_tools.append(t)
                 elif kind == "error":
                     raise DifyBridgeError("Dify Agent在运行中出错，请检查Dify日志。")
                 elif kind == "message_end":
@@ -106,9 +161,18 @@ def ask_lovis(query: str, key: str, *, user: str, conversation_id: str = "",
     text = "".join(answer).strip()
     if not finished or not text:
         raise DifyBridgeError("Dify未完成本轮回答；不使用不完整结果。")
+    trace_source = "Dify实时API事件" if reported_tools else "未返回工具记录"
+    if not reported_tools and conv_id and message_id:
+        reported_tools = get_message_tool_events(
+            key, user=user, conversation_id=conv_id, message_id=message_id,
+            api_base=api_base, session=session,
+        )
+        if reported_tools:
+            trace_source = "Dify已保存消息的工具记录"
     return {
         "answer": text, "conversation_id":conv_id,
-        "message_id":message_id, "tool_events":reported_tools
+        "message_id":message_id, "tool_events":reported_tools,
+        "tool_trace_source":trace_source,
     }
 
 
