@@ -1,0 +1,54 @@
+{
+  "title": "CWRU same-rig laboratory four-class exploratory classifier",
+  "frozen_model_sha256": "8f1506d31e3265baeb056969335ed13468eb0ff64f1e34f9ba5fe2945f9e7b5d",
+  "train_load_hp": 0,
+  "test_load_results": [
+    {
+      "hp": 1,
+      "source_files": 4,
+      "non_overlapping_windows": 96,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "note": "Initial file-level holdout, used in three preplanned feature comparisons"
+    },
+    {
+      "hp": 2,
+      "source_files": 4,
+      "non_overlapping_windows": 96,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "note": "Fixed-model supplementary evaluation"
+    },
+    {
+      "hp": 3,
+      "source_files": 4,
+      "non_overlapping_windows": 96,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "note": "Fixed-model supplementary evaluation"
+    }
+  ],
+  "test_source_files_total": 12,
+  "test_windows_total": 288,
+  "labels": [
+    "normal",
+    "inner_race",
+    "rolling_element",
+    "outer_race_6"
+  ],
+  "analysis_fs_hz": 12000,
+  "input_feature_count": 25,
+  "window_size_points": 2048,
+  "not_generalizable_to": "industrial deployed bearings or independent rigs",
+  "limitations": [
+    "Only one source recording for each load and class; windows correlated",
+    "Same rig and defect configuration; not a new device or bearing population",
+    "Normal source files 48 kHz and faulty files 12 kHz despite unified analysis fs",
+    "Votes not calibrated probability",
+    "1HP was originally analyzed before 2/3 HP post-hoc supplementary assessments"
+  ],
+  "source_records": [
+    "summary.json",
+    "results_2hp_3hp.json"
+  ]
+}
