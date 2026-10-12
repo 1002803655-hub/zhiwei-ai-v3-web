@@ -79,6 +79,25 @@ class HomeTests(unittest.TestCase):
                              {"mode":"rename","id":first})
             self.assertEqual(app.session_state["lovis_chat_store"]["active_id"],second)
 
+    def test_rename_from_ellipsis_does_not_switch_other_chat(self):
+        with patch("streamlit_local_storage.LocalStorage",FakeBrowserStorage):
+            app=AppTest.from_file(app_path(),default_timeout=25).run()
+            first=app.session_state["lovis_chat_store"]["active_id"]
+            app=next(b for b in app.button if b.label=="＋ 开始新对话").click().run()
+            second=app.session_state["lovis_chat_store"]["active_id"]
+            app=next(b for b in app.button if b.key=="lovis_menu_rename_"+first).click().run()
+            self.assertEqual(len(app.exception),0)
+            edit=next(t for t in app.text_input if t.label=="对话名称")
+            app=edit.set_value("一号电机历史分析").run()
+            self.assertEqual(len(app.exception),0)
+            app=next(b for b in app.button if b.label=="保存名称").click().run()
+            self.assertEqual(len(app.exception),0)
+            archive=app.session_state["lovis_chat_store"]
+            self.assertEqual(archive["active_id"],second)
+            name=next(c["title"] for c in archive["chats"] if c["id"]==first)
+            self.assertEqual(name,"一号电机历史分析")
+            self.assertNotIn("lovis_action_target",app.session_state._state)
+
     def test_deletion_requires_confirmation_and_preserves_other_chat(self):
         with patch("streamlit_local_storage.LocalStorage",FakeBrowserStorage):
             app=AppTest.from_file(app_path(),default_timeout=25).run()
