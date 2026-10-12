@@ -348,7 +348,7 @@ with st.sidebar:
     st.divider()
     st.caption("**云端与隐私**")
     approved=st.checkbox("同意将本轮文字提问和脱敏计算摘要发送至Dify Cloud",value=False)
-    st.caption("不向Dify上传MAT、原始波形、文件名、SHA-256。")
+    st.caption("MAT、原始波形、文件名及SHA-256不发送至Dify；CSV运行数值仅在另行授权后发送。")
     st.caption("公开实验台研究原型，不能代替现场故障确诊。")
 
 try:
@@ -448,7 +448,7 @@ with st.popover("📂 数据与演示样本",help="上传请点击下方聊天�
         rates=[12000,48000]
         original=int(attached["source_fs_hz"])
         rate=st.selectbox("原始采样率（Hz）",rates,index=rates.index(original)
-                          if original in rates else 0,key="lovis_mat_rate_selector")
+                          if original in rates else 0,key="lovis_mat_rate_selector_"+attached["sha256"][:12])
         if rate!=original:
             attached["source_fs_hz"]=rate
             attached.pop("cached_signal",None)
