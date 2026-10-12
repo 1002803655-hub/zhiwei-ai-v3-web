@@ -53,6 +53,32 @@ class HomeTests(unittest.TestCase):
             self.assertEqual(app.session_state["lovis_chat_store"]["active_id"],original)
             self.assertEqual(app.session_state["lovis_conversation_id"],"")
 
+    def test_each_chat_has_ellipsis_rename_and_delete_menu(self):
+        # Verify history actions are attached to their own chat ID, not a
+        # global management panel (which could delete the wrong conversation).
+        with patch("streamlit_local_storage.LocalStorage", FakeBrowserStorage):
+            app=AppTest.from_file(app_path(),default_timeout=25).run()
+            self.assertEqual(len(app.exception),0)
+            first=app.session_state["lovis_chat_store"]["active_id"]
+            app=next(b for b in app.button if b.label=="＋ 开始新对话").click().run()
+            self.assertEqual(len(app.exception),0)
+            second=app.session_state["lovis_chat_store"]["active_id"]
+            self.assertNotEqual(first,second)
+            rename_ids={b.key for b in app.button if b.key and
+                        b.key.startswith("lovis_menu_rename_")}
+            delete_ids={b.key for b in app.button if b.key and
+                        b.key.startswith("lovis_menu_delete_")}
+            self.assertEqual(rename_ids,{"lovis_menu_rename_"+first,
+                                         "lovis_menu_rename_"+second})
+            self.assertEqual(delete_ids,{"lovis_menu_delete_"+first,
+                                         "lovis_menu_delete_"+second})
+            # Clicking the action must point to the selected, non-active chat.
+            app=next(b for b in app.button if b.key=="lovis_menu_rename_"+first).click().run()
+            self.assertEqual(len(app.exception),0)
+            self.assertEqual(app.session_state["lovis_action_target"],
+                             {"mode":"rename","id":first})
+            self.assertEqual(app.session_state["lovis_chat_store"]["active_id"],second)
+
     def test_reopening_page_restores_browser_chat(self):
         from lovis_history import STORAGE_KEY
         backup=build_snapshot(
