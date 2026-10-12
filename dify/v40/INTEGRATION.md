@@ -6,9 +6,13 @@
 2. `line_fault_locator.locate_faults(...)` 在 Streamlit/Python 后端本地执行，唯一负责规则评分。
 3. `lovis_v40/integration.py` 将候选、评分分解、关联部件、支持/矛盾事件、缺失数据和状态传给 Dify 管理Agent。
 4. 管理Agent输出受限 JSON 路由决策。后端校验路由名称后，调用对应的独立 Dify 专家工作流；管理Agent不计算或重排分数。
-5. 专家工作流返回结构化证据复核和检查建议，管理Agent再生成带不确定性的摘要。
+5. 第一位专家返回后，管理Agent可输出 `finish`、`call_expert` 或 `human_review` 的 followup 决策。Python 后端仅允许路由到原始定位支持事件白名单中的另一领域；专家建议本身不构成证据。最多两位不同专家，之后由管理Agent生成简体中文摘要。
 
-评分是实验规则点数，不是概率。工位候选和共享控制器候选分开；部件作为工位候选的关联信息。没有独立现场验证时 `verified_fault` 必须保持 `false`。本次安全修订版本：定位参数集 `AL-01-exp-1.1`，事件格式 `lovis-v40-event-1.0`，Dify提示词契约 `v1.1`。PLC联锁是保护动作，不单独计作PLC本机异常；重复同设备同周期的本机异常点受配置上限约束。告警码必须与字典指定的设备和信号匹配。
+评分是实验规则点数，不是概率。工位候选和共享控制器候选分开；部件作为工位候选的关联信息。没有独立现场验证时 `verified_fault` 必须保持 `false`。本次安全修订版本：定位参数集 `AL-01-exp-1.1`，事件格式 `lovis-v40-event-1.0`，Dify管理Agent提示词契约 `v1.2`。PLC联锁是保护动作，不单独计作PLC本机异常；重复同设备同周期的本机异常点受配置上限约束。告警码必须与字典指定的设备和信号匹配。
+
+## 管理Agent协同升级
+
+`management_agent.dsl.v1.1.backup.yml` 保存本次修改前的管理Agent DSL；`management_agent.dsl.yml` 是 followup v1.2 导入候选。仅导入为新的独立实验应用，不覆盖已验证线上应用。本次也为两个专家 DSL 准备了 v1.2 独立导入候选，要求输出标准化 `assessment`（abnormal/normal/inconclusive）以比较跨专家对同一事件的判断；`robot_expert_workflow.dsl.v1.1.backup.yml` 与 `motion_control_expert_workflow.dsl.v1.1.backup.yml` 保存修改前版本。旧线上专家响应不含该字段时仍兼容，但无法据此判断语义冲突。
 
 ## 导入Dify实验DSL
 
@@ -20,7 +24,7 @@
 - `robot_expert_workflow.dsl.yml`：机器人/真空夹爪专家工作流。
 - `motion_control_expert_workflow.dsl.yml`：运动控制专家工作流。
 
-导入后为每个应用选择当前租户已配置的模型供应商/模型，保存并使用平台测试运行验证各自的输入输出。机器人及运动控制工作流先提供可导入的结构化复核模板；需按现场维护规范补充专家知识和检查流程。压装与视觉分支目前仅预留配置键和Agent路由接口，尚无工作流DSL。
+管理Agent DSL 的旧版备份为 `management_agent.dsl.v1.1.backup.yml`。升级时将 `management_agent.dsl.yml` 导入为新实验应用，检查提示词包含 `stage=followup` 契约；不得覆盖旧应用。导入后为每个应用选择当前租户已配置的模型供应商/模型，保存并使用平台测试运行验证各自的输入输出。机器人及运动控制工作流先提供可导入的结构化复核模板；需按现场维护规范补充专家知识和检查流程。压装与视觉分支目前仅预留配置键和Agent路由接口，尚无工作流DSL。
 
 此DSL尚未在用户Dify租户导入或运行验证：当前会话未发现可访问的浏览器标签，浏览器扩展连接读取失败。现有Lovis应用也未能打开，因此本次没有导出现有DSL备份、创建平台副本、配置模型/API Key或发布任何应用。导入后请确认是新实验应用且旧应用未被覆盖。
 
@@ -61,8 +65,9 @@ streamlit run lovis_v40/streamlit_app.py
 - 专家返回 `candidate_review`、观察和检查建议，`verified_fault=false`。
 - 管理Agent摘要保留不确定性，`verified_fault=false`。
 - 专家不可用会返回 `expert_unavailable`，不伪造专家结果；定位数据不足时不调用Dify。
+- 多专家协同模拟测试覆盖单领域不追加、双领域原始证据可路由、专家建议无证据拒绝、冲突人工复核、第二专家失败部分完成及重复/超限拒绝。
 
-这属于使用模拟Agent响应的端到端接口测试，不代表真实模型决策、Dify租户调用或专家知识已经通过平台验证。
+这属于使用模拟Agent响应的端到端接口测试，不代表真实模型决策、Dify租户调用或专家知识已经通过平台验证。此前 T02/T03 真实Dify执行记录属于旧版独立链路，本次 followup DSL 尚未真实平台联调。
 
 ## 回归状态
 
