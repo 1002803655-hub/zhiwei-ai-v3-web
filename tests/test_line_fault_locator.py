@@ -29,6 +29,7 @@ class LocatorScenarios(unittest.TestCase):
     def test_T06_simulation_independent_faults(self):
         r=self.run_case([ev("a","S01-FE01","feed_ready",False,"bool",1,"S01_NO_FEED"),ev("b","S03-LC01","press_force",20,"kN",1,"S03_PRESS_FORCE")])
         self.assertEqual({c["station_id"] for c in r["candidates"][:2]}, {"S01","S03"})
+        self.assertFalse(any(c["possible_propagation_paths"] for c in r["candidates"]))
     def test_T07_simulation_out_of_order_input(self):
         r=self.run_case([ev("later","S03-PE01","part_present",False,"bool",8,"S03_PART_MISSING"),ev("early","S01-FE01","feed_ready",False,"bool",1,"S01_NO_FEED")])
         self.assertIn("out of timestamp order", " ".join(r["warnings"]))

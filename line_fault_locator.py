@@ -147,7 +147,9 @@ def locate_faults(events, topology, signal_dictionary, alarm_dictionary, config)
                     if target_station not in order or source_station not in order or order[target_station] <= order[source_station]:
                         continue
                     gap = (target["_dt"] - source["_dt"]).total_seconds()
-                    if 0 <= gap <= temporal_window:
+                    # Strictly later downstream observations may be consistent with
+                    # propagation; simultaneous events do not establish ordering.
+                    if 0 < gap <= temporal_window:
                         path = [source_station]
                         current = source_station
                         while current != target_station:
