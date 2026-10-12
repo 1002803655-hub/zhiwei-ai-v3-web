@@ -14,7 +14,11 @@ import re
 import uuid
 from pathlib import Path
 from streamlit_local_storage import LocalStorage
-from lovis_history import STORAGE_KEY, build_snapshot, validate_snapshot, to_bytes
+from lovis_history import STORAGE_KEY as LEGACY_STORAGE_KEY
+from lovis_conversations import (
+    STORAGE_KEY_V2, MAX_CHATS, new_store, active_chat, add_chat,
+    switch_chat, rename_chat, delete_chat, sync_active, validate_store, to_json_bytes
+)
 from typing import Optional
 
 import numpy as np
@@ -88,37 +92,50 @@ def read_uploaded_source(content:bytes, name:str):
         return values,target,rpm
 
 
-def new_chat():
-    for key in ("lovis_messages","lovis_conversation_id","lovis_anon_user",
-                "lovis_analysis","lovis_calls","lovis_tool_events","lovis_trace_source"):
-        st.session_state.pop(key,None)
-    # Prevent a delayed browser read from bringing a deliberately cleared chat back.
-    st.session_state.lovis_history_restored=True
-    st.session_state.lovis_history_dirty=True
+def apply_active_chat(chat:dict) -> None:
+    """Load messages AND Dify identifiers; never leak context across chats."""
+    st.session_state.lovis_messages = list(chat["messages"])
+    st.session_state.lovis_conversation_id = chat["dify_conversation_id"]
+    st.session_state.lovis_anon_user = chat["dify_user"]
+    st.session_state.lovis_tool_events = list(chat["recent_tool_events"])
+    st.session_state.lovis_trace_source = chat["recent_tool_trace_source"]
+    st.session_state.pop("lovis_analysis",None)  # MAT data and waveforms are ephemeral.
 
 
-def apply_saved_chat(saved):
-    st.session_state.lovis_messages=saved["messages"]
-    st.session_state.lovis_conversation_id=saved["conversation_id"]
-    st.session_state.lovis_anon_user=saved["user"]
-    st.session_state.lovis_tool_events=saved["tool_events"]
-    st.session_state.lovis_trace_source=saved["trace_source"]
-    # The rate limit is per active browser session, not for the lifetime of a diagnosis.
-    st.session_state.lovis_calls=0
-    st.session_state.pop("lovis_analysis",None)
-    st.session_state.lovis_history_restored=True
-    st.session_state.lovis_history_dirty=False
-
-
-def get_chat_snapshot():
-    return build_snapshot(
+def save_active_chat() -> None:
+    sync_active(
+        st.session_state.lovis_chat_store,
         st.session_state.get("lovis_messages",[]),
         st.session_state.get("lovis_anon_user",""),
         st.session_state.get("lovis_conversation_id",""),
         st.session_state.get("lovis_tool_events",[]),
         st.session_state.get("lovis_trace_source",""),
-        st.session_state.get("lovis_calls",0),
     )
+    st.session_state.lovis_archive_dirty=True
+    st.session_state.lovis_archive_restored=True
+
+
+def restore_archive(archive:dict) -> None:
+    st.session_state.lovis_chat_store=validate_store(archive)
+    apply_active_chat(active_chat(st.session_state.lovis_chat_store))
+    st.session_state.lovis_archive_restored=True
+
+
+def activate_chat(chat_id:str) -> None:
+    save_active_chat()
+    chosen=switch_chat(st.session_state.lovis_chat_store,chat_id)
+    apply_active_chat(chosen)
+    st.session_state.lovis_archive_dirty=True
+    st.rerun()
+
+
+def create_chat() -> None:
+    save_active_chat()
+    created=add_chat(st.session_state.lovis_chat_store)
+    apply_active_chat(created)
+    st.session_state.lovis_archive_dirty=True
+    st.rerun()
+
 
 
 def wants_vibration_analysis(question:str)->bool:
@@ -195,36 +212,42 @@ def show_evidence(analysis:dict, tool_events:list[str]):
                            use_container_width=True)
 
 
+if "lovis_chat_store" not in st.session_state:
+    st.session_state.lovis_chat_store=new_store()
 if "lovis_messages" not in st.session_state:
-    st.session_state.lovis_messages=[]
-if "lovis_anon_user" not in st.session_state:
-    st.session_state.lovis_anon_user="lovis-"+uuid.uuid4().hex
+    apply_active_chat(active_chat(st.session_state.lovis_chat_store))
 if "lovis_calls" not in st.session_state:
-    st.session_state.lovis_calls=0
-if "lovis_conversation_id" not in st.session_state:
-    st.session_state.lovis_conversation_id=""
-if "lovis_tool_events" not in st.session_state:
-    st.session_state.lovis_tool_events=[]
+    st.session_state.lovis_calls=0  # Per active browser session; NOT reset when switching chats.
 
-# Persistent browser history is local to this browser and this Streamlit origin.
-# A separate portable JSON export/import works even if third-party storage is blocked.
+# Browser-local archive v2, with automatic upgrade from the previous single-chat
+# storage key. Old key is left untouched as a backup.
 try:
     lovis_storage=LocalStorage()
-    raw_browser_chat=lovis_storage.getItem(STORAGE_KEY)
-    if (not st.session_state.get("lovis_history_restored",False)
-            and not st.session_state.get("lovis_history_dirty",False)
-            and raw_browser_chat is not None):
-        try:
-            apply_saved_chat(validate_snapshot(raw_browser_chat))
-            st.rerun()
-        except (ValueError,TypeError):
-            st.session_state.lovis_storage_note="浏览器中的旧会话格式无效；可使用JSON备份恢复。"
-            st.session_state.lovis_history_restored=True
-    if st.session_state.pop("lovis_history_dirty",False):
-        lovis_storage.setItem(STORAGE_KEY,get_chat_snapshot())
+    if not st.session_state.get("lovis_archive_restored",False):
+        stored_archive=lovis_storage.getItem(STORAGE_KEY_V2)
+        if stored_archive is not None:
+            try:
+                restore_archive(stored_archive)
+            except (ValueError,TypeError) as exc:
+                st.session_state.lovis_storage_note="已保存的多会话记录有误："+str(exc)
+                st.session_state.lovis_archive_restored=True
+        else:
+            legacy=lovis_storage.getItem(LEGACY_STORAGE_KEY)
+            if legacy is not None:
+                try:
+                    restore_archive(legacy)
+                    st.session_state.lovis_archive_dirty=True
+                    st.session_state.lovis_storage_note="旧版单会话记录已迁移到多会话列表。"
+                except (ValueError,TypeError) as exc:
+                    st.session_state.lovis_storage_note="旧版备份读取失败："+str(exc)
+                    st.session_state.lovis_archive_restored=True
+    if st.session_state.get("lovis_archive_dirty",False):
+        # Build full validated JSON, then write one atomic archive.
+        lovis_storage.setItem(STORAGE_KEY_V2,validate_store(st.session_state.lovis_chat_store))
+        st.session_state.lovis_archive_dirty=False
 except Exception as exc:
     st.session_state.lovis_storage_note=(
-        "浏览器自动保存暂不可用（"+type(exc).__name__+"），请先使用会话JSON备份。"
+        "自动保存暂不可用（"+type(exc).__name__+"）；请在侧栏下载私密会话备份。"
     )
 
 # Sidebar is optional context. It does not automatically call any algorithm.
@@ -235,38 +258,91 @@ identity="none"
 with st.sidebar:
     st.markdown("### 🤖 Lovis")
     st.caption("智维AI · 工业电机智能辅助诊断")
-    if st.button("＋ 开始新会话",use_container_width=True):
-        new_chat()
-        st.rerun()
-    with st.expander("会话记录与恢复",expanded=False):
-        messages=st.session_state.get("lovis_messages",[])
-        for m in [x for x in messages if x["role"]=="user"][-6:]:
-            st.caption("· "+m["content"][:70])
-        if not messages:
-            st.caption("暂无提问记录")
-        st.caption("同一浏览器自动尝试恢复最近一次会话；清除浏览器数据或换设备可能导致记录丢失。")
+    if st.button("＋ 开始新对话",use_container_width=True):
+        try:
+            create_chat()
+        except ValueError as exc:
+            st.warning(str(exc))
+    st.markdown("**最近**")
+    archive=st.session_state.lovis_chat_store
+    for ch in sorted(archive["chats"],key=lambda c:c["updated_at"],reverse=True):
+        active = (ch["id"] == archive["active_id"])
+        label = ("▸ " if active else "💬 ") + ch["title"]
+        if st.button(label,key="lovis_select_"+ch["id"],
+                     help="切换到此独立对话",use_container_width=True,
+                     type="primary" if active else "secondary"):
+            if not active:
+                activate_chat(ch["id"])
+    with st.expander("管理会话 / 备份与恢复",expanded=False):
+        st.caption(f"本浏览器现有{len(archive['chats'])}/{MAX_CHATS}段独立对话。"
+                   "每段对话分别保留Dify上下文。")
+        current=active_chat(archive)
+        title=st.text_input("当前对话名称",value=current["title"],
+                            max_chars=40,key="lovis_title_"+current["id"])
+        if st.button("保存名称",use_container_width=True):
+            save_active_chat()
+            rename_chat(archive,current["id"],title)
+            st.rerun()
+        confirm_delete=st.checkbox("确认删除当前对话（不可撤销）",
+                                   key="lovis_delete_confirm_"+current["id"])
+        if st.button("删除当前对话",disabled=not confirm_delete,
+                     use_container_width=True):
+            delete_chat(archive,current["id"])
+            apply_active_chat(active_chat(archive))
+            st.session_state.lovis_archive_dirty=True
+            st.rerun()
+        st.divider()
+        st.caption("浏览器会自动保存，但清除站点数据、换设备或隐私模式可能导致记录丢失。")
         if st.session_state.get("lovis_storage_note"):
             st.warning(st.session_state["lovis_storage_note"])
-        st.download_button(
-            "⬇ 导出会话备份（私密JSON）",
-            data=to_bytes(get_chat_snapshot()),file_name="lovis_chat_backup.json",
-            mime="application/json",use_container_width=True,
-        )
-        backup=st.file_uploader("导入此前保存的Lovis会话JSON",type=["json"],
-                                key="lovis_history_import_file")
-        if st.button("恢复上传的会话",disabled=backup is None,
+        try:
+            archive_bytes=to_json_bytes(archive)
+            st.download_button(
+                "⬇ 导出全部会话（私密JSON）",data=archive_bytes,
+                file_name="lovis_all_chats_backup.json",mime="application/json",
+                use_container_width=True,
+            )
+        except ValueError as exc:
+            st.error("会话备份超出限制："+str(exc))
+        backup=st.file_uploader("导入Lovis会话备份（支持旧版JSON）",
+                                type=["json"],key="lovis_archive_import")
+        if backup is not None:
+            st.caption("新版多会话备份会替换当前全部会话；旧版单会话备份会新增一条对话。"
+                       "请先导出当前全部会话。")
+        overwrite=st.checkbox("确认导入或替换会话记录",
+                              key="lovis_archive_import_confirm")
+        if st.button("恢复备份",disabled=backup is None or not overwrite,
                      use_container_width=True):
             try:
-                if backup.size>400000:
-                    raise ValueError("备份文件过大")
-                validated=validate_snapshot(backup.getvalue().decode("utf-8"))
-                apply_saved_chat(validated)
-                st.session_state.lovis_history_dirty=True
+                if backup.size>2_000_000:
+                    raise ValueError("备份文件超过2MB")
+                incoming=backup.getvalue().decode("utf-8")
+                imported=validate_store(incoming)
+                if imported.get("schema")!=2:
+                    raise ValueError("备份格式错误")
+                import json
+                raw=json.loads(incoming)
+                if raw.get("schema")==1:
+                    if len(archive["chats"])>=MAX_CHATS:
+                        raise ValueError("会话数量已满，先导出并清理旧会话")
+                    new_item=imported["chats"][0]
+                    existing={(c["dify_user"],c["dify_conversation_id"]) for c in archive["chats"]}
+                    if (new_item["dify_user"],new_item["dify_conversation_id"]) in existing:
+                        raise ValueError("这段旧对话已在当前会话列表中")
+                    save_active_chat()
+                    archive["chats"].insert(0,new_item)
+                    archive["active_id"]=new_item["id"]
+                    st.session_state.lovis_chat_store=archive
+                    apply_active_chat(new_item)
+                    st.session_state.lovis_archive_dirty=True
+                else:
+                    restore_archive(imported)
+                    st.session_state.lovis_archive_dirty=True
                 st.rerun()
-            except (ValueError,UnicodeDecodeError) as exc:
-                st.error("恢复失败："+str(exc))
-        st.caption("备份包含历史提问及Dify会话标识，请勿公开分享。")
-        st.caption("网页不会长期存储上传的MAT、原始波形或计算结果；重新打开后可能需要重新关联数据。")
+            except (ValueError,TypeError,UnicodeDecodeError) as exc:
+                st.error("导入失败："+str(exc))
+        st.caption("备份含聊天原文和Dify会话标识。请勿分享给他人；"
+                   "原始MAT和波形不会随会话记录保存。")
     st.divider()
     st.markdown("**关联数据（可选）**")
     source=st.radio("数据来源",["暂不关联","CWRU内置示例","上传MAT文件"],label_visibility="collapsed")
@@ -424,8 +500,7 @@ if message:
                 except DifyBridgeError as exc:
                     st.session_state.lovis_messages.append({
                         "role":"assistant","content":(local_msg+"\n\n" if local_msg else "")+"Dify调用失败："+str(exc)})
-        st.session_state.lovis_history_restored=True
-        st.session_state.lovis_history_dirty=True
+        save_active_chat()
         st.rerun()
 
 # Compact, conditional evidence zone: do not make analytic widgets the homepage.
