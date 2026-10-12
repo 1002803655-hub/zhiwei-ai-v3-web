@@ -21,6 +21,15 @@ EXPERT_ENV = {
     "vision_expert": "LOVIS_V40_VISION_EXPERT_API_KEY",
 }
 ALLOWED_ROUTES = set(EXPERT_ENV) | {"human_review", "none"}
+MANAGER_DECISION_FIELDS = {"next_expert", "reason", "candidate_station_id", "verified_fault"}
+MANAGER_SUMMARY_FIELDS = {"summary", "verified_fault"}
+EXPERT_FIELDS = {"status", "subsystem", "observations", "recommended_checks", "evidence_event_ids", "verified_fault"}
+ROUTE_COMPONENTS = {
+    "robot_expert": {"S02-RB01", "S02-VG01"},
+    "motion_control_expert": {"S02-SV01"},
+    "press_expert": {"S03-SV01", "S03-PE01", "S03-LC01"},
+    "vision_expert": {"S04-CAM01"},
+}
 
 
 class IntegrationError(RuntimeError):
@@ -64,6 +73,10 @@ class DifyClient:
             raise IntegrationError("Management Agent response was not valid JSON") from None
         if not isinstance(obj, dict):
             raise IntegrationError("Management Agent JSON must be an object")
+        if stage == "dispatch":
+            _validate_decision(obj)
+        elif stage == "summarize":
+            _validate_summary(obj)
         return obj
 
     def expert(self, route: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -82,8 +95,61 @@ class DifyClient:
             try:
                 raw = json.loads(raw)
             except json.JSONDecodeError:
-                return {"status": "unstructured_response", "text": raw[:4000]}
-        return raw if isinstance(raw, dict) else {"status": "invalid_response", "raw_type": type(raw).__name__}
+                raise IntegrationError("Expert workflow response was not valid JSON") from None
+        if not isinstance(raw, dict):
+            raise IntegrationError("Expert workflow response must be a JSON object")
+        _validate_expert_result(raw)
+        return raw
+
+
+def _validate_decision(obj: dict[str, Any]) -> None:
+    if set(obj) != MANAGER_DECISION_FIELDS:
+        raise IntegrationError("Management Agent dispatch JSON has missing or unsupported fields")
+    route, reason, station = obj["next_expert"], obj["reason"], obj["candidate_station_id"]
+    if route not in ALLOWED_ROUTES or not isinstance(reason, str) or not reason.strip():
+        raise IntegrationError("Management Agent dispatch JSON has invalid route or reason")
+    if route in {"human_review", "none"}:
+        if station is not None:
+            raise IntegrationError("Human-review dispatch must not select a candidate station")
+    elif not isinstance(station, str) or not station:
+        raise IntegrationError("Expert dispatch must name candidate_station_id")
+    if obj["verified_fault"] is not False:
+        raise IntegrationError("Management Agent cannot set verified_fault")
+
+
+def _validate_summary(obj: dict[str, Any]) -> None:
+    if set(obj) != MANAGER_SUMMARY_FIELDS or not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
+        raise IntegrationError("Management Agent summary JSON has missing or unsupported fields")
+    if obj.get("verified_fault") is not False:
+        raise IntegrationError("Management Agent summary cannot set verified_fault")
+
+
+def _validate_expert_result(obj: dict[str, Any]) -> None:
+    if set(obj) != EXPERT_FIELDS:
+        raise IntegrationError("Expert workflow JSON has missing or unsupported fields")
+    if obj.get("status") != "candidate_review" or not isinstance(obj.get("subsystem"), str) or not obj["subsystem"].strip():
+        raise IntegrationError("Expert workflow JSON has invalid status or subsystem")
+    for key in ("observations", "recommended_checks", "evidence_event_ids"):
+        if not isinstance(obj.get(key), list) or any(not isinstance(item, str) or not item.strip() for item in obj[key]):
+            raise IntegrationError(f"Expert workflow field {key} must be a list of non-empty strings")
+    if obj.get("verified_fault") is not False:
+        raise IntegrationError("Expert workflow cannot set verified_fault")
+
+
+def _route_compatible(route: str, station_id: str, payload: dict[str, Any]) -> bool:
+    if route not in ROUTE_COMPONENTS:
+        return False
+    for candidate in payload.get("station_candidates", []):
+        if candidate.get("station_id") != station_id:
+            continue
+        associated = set(candidate.get("associated_component_ids", []))
+        component = candidate.get("component_id")
+        if component:
+            associated.add(component)
+        if station_id == "PLC01":
+            return False
+        return bool(associated & ROUTE_COMPONENTS[route])
+    return False
 
 
 def _evidence_payload(locator_result: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -115,11 +181,17 @@ def run_management_cycle(locator_result: dict[str, Any], events: list[dict[str, 
     except IntegrationError as exc:
         return {"status": "management_agent_unavailable", "decision": None, "expert_call": None,
                 "expert_result": None, "management_summary": None, "error": str(exc), "locator": payload}
-    route = decision.get("next_expert")
-    if route not in ALLOWED_ROUTES:
-        return {"status": "invalid_agent_route", "decision": decision, "expert_call": None,
+    try:
+        _validate_decision(decision)
+    except (IntegrationError, AttributeError, TypeError):
+        return {"status": "invalid_agent_response", "decision": None, "expert_call": None,
                 "expert_result": None, "management_summary": None,
-                "error": "Management Agent selected an unsupported expert route", "locator": payload}
+                "error": "Management Agent dispatch schema validation failed", "locator": payload}
+    route = decision["next_expert"]
+    if route not in {"human_review", "none"} and not _route_compatible(route, decision["candidate_station_id"], payload):
+        return {"status": "incompatible_agent_route", "decision": decision, "expert_call": None,
+                "expert_result": None, "management_summary": None,
+                "error": "Selected expert is incompatible with the chosen locator candidate", "locator": payload}
     if route in {"none", "human_review"}:
         return {"status": "awaiting_review", "decision": decision, "expert_call": None,
                 "expert_result": None, "management_summary": None, "locator": payload}
@@ -129,12 +201,24 @@ def run_management_cycle(locator_result: dict[str, Any], events: list[dict[str, 
     except IntegrationError as exc:
         return {"status": "expert_unavailable", "decision": decision, "expert_call": {"route": route, "called": False},
                 "expert_result": None, "management_summary": None, "error": str(exc), "locator": payload}
+    try:
+        _validate_expert_result(expert_result)
+    except (IntegrationError, AttributeError, TypeError):
+        return {"status": "invalid_expert_response", "decision": decision, "expert_call": {"route": route, "called": True},
+                "expert_result": None, "management_summary": None,
+                "error": "Expert workflow failed schema validation", "locator": payload}
     summary_input = {"locator": payload, "decision": decision, "expert_route": route, "expert_result": expert_result}
     try:
         summary = dify.manager("summarize", summary_input)
     except IntegrationError as exc:
         return {"status": "summary_unavailable", "decision": decision, "expert_call": {"route": route, "called": True},
                 "expert_result": expert_result, "management_summary": None, "error": str(exc), "locator": payload}
+    try:
+        _validate_summary(summary)
+    except (IntegrationError, AttributeError, TypeError):
+        return {"status": "invalid_agent_response", "decision": decision, "expert_call": {"route": route, "called": True},
+                "expert_result": expert_result, "management_summary": None,
+                "error": "Expert or management summary failed schema validation", "locator": payload}
     return {"status": "completed", "decision": decision, "expert_call": {"route": route, "called": True},
             "expert_result": expert_result, "management_summary": summary, "locator": payload}
 

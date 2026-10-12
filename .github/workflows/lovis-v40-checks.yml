@@ -1,0 +1,26 @@
+name: Lovis V4.0 checks
+on:
+  push:
+    branches: [lovis-v40-dev]
+  pull_request:
+    branches: [lovis-v40-dev]
+  workflow_dispatch:
+jobs:
+  v40-and-v31:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile V4.0 Python
+        run: python -m py_compile line_fault_locator.py lovis_v40/__init__.py lovis_v40/integration.py lovis_v40/streamlit_app.py
+      - name: V4.0 locator tests
+        run: python -m unittest discover -s tests -p 'test_line_fault_locator.py' -v
+      - name: V4.0 integration tests
+        run: python -m unittest discover -s tests -p 'test_lovis_v40_integration.py' -v
+      - name: V3.1 regression tests
+        run: python -m unittest discover -s tests -p 'test_lovis_*.py' -v
+

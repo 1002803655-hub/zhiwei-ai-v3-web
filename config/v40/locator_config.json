@@ -1,10 +1,14 @@
 {
   "experimental_only": true,
+  "parameter_set_version": "AL-01-exp-1.1",
+  "event_schema_version": "lovis-v40-event-1.0",
+  "signal_dictionary_schema_version": "lovis-v40-signal-dictionary-1.0",
   "parameter_notice": "实验配置；未经现场数据校准，不代表工业通用阈值或建议值。",
   "weights": {"local_abnormal": 5, "normal_counter_evidence": -2, "downstream_sequence": 3, "downstream_can_be_propagated": 2, "shared_plc_precedes": 5},
   "cycle_time_window_seconds": 120,
   "temporal_window_seconds": 30,
   "minimum_evidence_points": 3,
+  "max_local_abnormal_points_per_device_cycle": 5,
   "ambiguity_margin_points": 1,
   "accepted_quality": ["good"]
 }

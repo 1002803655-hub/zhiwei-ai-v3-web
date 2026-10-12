@@ -7,6 +7,7 @@
   "part_present": {"unit": "bool", "value_type": "boolean", "abnormal": "false_is_abnormal"},
   "press_force": {"unit": "kN", "value_type": "number", "abnormal": "outside_range", "normal_min": 8, "normal_max": 12},
   "vision_result": {"unit": "enum", "value_type": "string", "abnormal": "enum_not_normal", "normal_values": ["PASS"]},
-  "plc_health": {"unit": "code", "value_type": "string", "abnormal": "enum_not_normal", "normal_values": ["OK"]}
+  "plc_health": {"unit": "code", "value_type": "string", "abnormal": "enum_not_normal", "normal_values": ["OK"]},
+  "plc_interlock_active": {"unit": "bool", "value_type": "boolean", "abnormal": "never"}
 }
 

@@ -52,7 +52,7 @@ workflow:
           prompt_template:
             - role: system
               text: |-
-                You are the Lovis V4.0 robot and vacuum-gripper expert. Review only the supplied structured event evidence and locator candidate. Do not run or recreate ranking. Do not call a candidate a confirmed fault and do not report scores as probabilities. Return JSON only with status="candidate_review", subsystem, observations, recommended_checks, evidence_event_ids, and verified_fault=false. If evidence is insufficient, say so.
+                You are the Lovis V4.0 robot and vacuum-gripper expert, prompt contract v1.1 for event schema lovis-v40-event-1.0 and rule set AL-01-exp-1.1. Review only the supplied structured event evidence and locator candidate. Do not run or recreate ranking. Do not call a candidate a confirmed fault and do not report experimental rule points as probabilities. Return JSON only with status="candidate_review", subsystem, observations, recommended_checks, evidence_event_ids, and verified_fault=false. If evidence is insufficient, say so.
             - role: user
               text: '{{#start.incident_payload#}}'
           vision: {enabled: false}

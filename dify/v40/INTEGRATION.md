@@ -8,9 +8,11 @@
 4. 管理Agent输出受限 JSON 路由决策。后端校验路由名称后，调用对应的独立 Dify 专家工作流；管理Agent不计算或重排分数。
 5. 专家工作流返回结构化证据复核和检查建议，管理Agent再生成带不确定性的摘要。
 
-评分是实验规则点数，不是概率。工位候选和共享控制器候选分开；部件作为工位候选的关联信息。没有独立现场验证时 `verified_fault` 必须保持 `false`。
+评分是实验规则点数，不是概率。工位候选和共享控制器候选分开；部件作为工位候选的关联信息。没有独立现场验证时 `verified_fault` 必须保持 `false`。本次安全修订版本：定位参数集 `AL-01-exp-1.1`，事件格式 `lovis-v40-event-1.0`，Dify提示词契约 `v1.1`。PLC联锁是保护动作，不单独计作PLC本机异常；重复同设备同周期的本机异常点受配置上限约束。告警码必须与字典指定的设备和信号匹配。
 
 ## 导入Dify实验DSL
+
+三份DSL均按当前Dify DSL导入器可接受的应用包顶层结构检查：`app`、`workflow`、`version`、`kind: app`；管理Agent采用 `advanced-chat`，两个专家采用 `workflow`。DSL版本为 `0.3.0`。这只能核对包结构与仓库节点配置，不能替代租户实际导入校验。模型节点目前填写 `openai / gpt-4o-mini`；因本会话无法访问用户Dify租户，不能核实该租户的供应商连接、模型可用性或套餐权限。导入时若该模型不在租户的已配置模型列表，需在新实验应用中改选租户可用模型并保存，不要覆盖正式应用。
 
 依次将以下文件通过 Dify Studio 的 DSL 导入功能导入为**新应用**，不要选择覆盖现有应用：
 
@@ -41,6 +43,8 @@ streamlit run lovis_v40/streamlit_app.py
 ```
 
 测试时选择默认T02模拟数据。平台调用要求管理应用可以通过 `/v1/chat-messages` 访问，专家工作流可通过 `/v1/workflows/run` 访问；需使用各自应用的API Key。没有配置Key时页面只返回本地定位结果和 `dify_not_configured` 状态，不声称已经连接。
+
+事件字段契约为 `lovis-v40-event-1.0`（event_id、line_id、cycle_id、带时区ISO 8601 timestamp、device_id、signal、value、unit、quality、data_source，可选 alarm_code）；拓扑版本见 `topology.json` 的 `schema_version`，信号字典版本见 `locator_config.json` 的 `signal_dictionary_schema_version`。所有样例数据标注 `data_source: simulation`。
 
 ## T02端到端实验记录
 

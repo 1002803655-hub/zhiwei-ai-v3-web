@@ -1,4 +1,5 @@
 {
+  "schema_version": "lovis-v40-topology-1.0",
   "line_id": "AL-01",
   "stations": [
     {"station_id": "S01", "name": "自动上料", "components": ["S01-FE01", "S01-CV01"]},

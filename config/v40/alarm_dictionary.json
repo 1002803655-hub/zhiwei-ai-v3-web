@@ -1,13 +1,14 @@
 {
+  "schema_version": "lovis-v40-alarm-dictionary-1.0",
   "alarms": {
-    "S01_NO_FEED": {"description": "实验规则：上料未就绪"},
-    "S02_GRIP_FAIL": {"description": "实验规则：抓取失败"},
-    "S02_SERVO_FAULT": {"description": "实验规则：机器人伺服异常"},
-    "S03_PART_MISSING": {"description": "实验规则：工件缺失"},
-    "S03_PRESS_FORCE": {"description": "实验规则：压装力偏离配置范围"},
-    "S04_VISION_NG": {"description": "实验规则：视觉判定异常"},
-    "PLC_INTERLOCK": {"description": "实验规则：PLC联锁"},
-    "PLC_FAULT": {"description": "实验规则：共享PLC控制异常"}
+    "S01_NO_FEED": {"description": "实验规则：上料未就绪", "device_ids": ["S01-FE01"], "signals": ["feed_ready"], "local_abnormal": true},
+    "S02_GRIP_FAIL": {"description": "实验规则：抓取失败", "device_ids": ["S02-VG01"], "signals": ["grip_ok", "grip_vacuum"], "local_abnormal": true},
+    "S02_SERVO_FAULT": {"description": "实验规则：机器人伺服异常", "device_ids": ["S02-SV01"], "signals": ["servo_status"], "local_abnormal": true},
+    "S03_PART_MISSING": {"description": "实验规则：工件缺失", "device_ids": ["S03-PE01"], "signals": ["part_present"], "local_abnormal": true},
+    "S03_PRESS_FORCE": {"description": "实验规则：压装力偏离配置范围", "device_ids": ["S03-LC01"], "signals": ["press_force"], "local_abnormal": true},
+    "S04_VISION_NG": {"description": "实验规则：视觉判定异常", "device_ids": ["S04-CAM01"], "signals": ["vision_result"], "local_abnormal": true},
+    "PLC_INTERLOCK": {"description": "实验规则：PLC联锁保护动作，不单独视为PLC故障", "device_ids": ["PLC01"], "signals": ["plc_interlock_active"], "local_abnormal": false},
+    "PLC_FAULT": {"description": "实验规则：共享PLC控制异常", "device_ids": ["PLC01"], "signals": ["plc_health"], "local_abnormal": true}
   }
 }
 

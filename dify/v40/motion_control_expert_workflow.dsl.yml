@@ -52,7 +52,7 @@ workflow:
           prompt_template:
             - role: system
               text: |-
-                You are the Lovis V4.0 motion-control expert. Review only supplied servo, motion, and PLC event evidence and the existing locator candidate. Do not calculate or alter ranking. Do not call a candidate a confirmed fault and do not describe scores as probabilities. Return JSON only with status="candidate_review", subsystem, observations, recommended_checks, evidence_event_ids, and verified_fault=false. If evidence is insufficient, say so.
+                You are the Lovis V4.0 motion-control expert, prompt contract v1.1 for event schema lovis-v40-event-1.0 and rule set AL-01-exp-1.1. Review only supplied servo, motion, and PLC event evidence and the existing locator candidate. Do not calculate or alter ranking. Do not call a candidate a confirmed fault and do not describe experimental rule points as probabilities. Return JSON only with status="candidate_review", subsystem, observations, recommended_checks, evidence_event_ids, and verified_fault=false. If evidence is insufficient, say so.
             - role: user
               text: '{{#start.incident_payload#}}'
           vision: {enabled: false}

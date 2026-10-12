@@ -2,6 +2,6 @@
   {"event_id":"feed","line_id":"AL-01","cycle_id":"SIM-C01","timestamp":"2026-01-01T00:00:00Z","device_id":"S01-FE01","signal":"feed_ready","value":true,"unit":"bool","quality":"good","data_source":"simulation"},
   {"event_id":"grip","line_id":"AL-01","cycle_id":"SIM-C01","timestamp":"2026-01-01T00:00:02Z","device_id":"S02-VG01","signal":"grip_ok","value":false,"unit":"bool","quality":"good","alarm_code":"S02_GRIP_FAIL","data_source":"simulation"},
   {"event_id":"short","line_id":"AL-01","cycle_id":"SIM-C01","timestamp":"2026-01-01T00:00:06Z","device_id":"S03-PE01","signal":"part_present","value":false,"unit":"bool","quality":"good","alarm_code":"S03_PART_MISSING","data_source":"simulation"},
-  {"event_id":"plc","line_id":"AL-01","cycle_id":"SIM-C01","timestamp":"2026-01-01T00:00:09Z","device_id":"PLC01","signal":"plc_health","value":"OK","unit":"code","quality":"good","alarm_code":"PLC_INTERLOCK","data_source":"simulation"}
+  {"event_id":"plc","line_id":"AL-01","cycle_id":"SIM-C01","timestamp":"2026-01-01T00:00:09Z","device_id":"PLC01","signal":"plc_interlock_active","value":true,"unit":"bool","quality":"good","alarm_code":"PLC_INTERLOCK","data_source":"simulation"}
 ]
 
