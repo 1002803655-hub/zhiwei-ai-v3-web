@@ -1,0 +1,84 @@
+app:
+  description: Lovis V4.0 L1 management agent. Consumes deterministic locator output and selects one expert route; it does not score faults.
+  icon: 🤖
+  icon_background: '#E4FBCC'
+  mode: advanced-chat
+  name: Lovis V4.0 AL-01 Management Agent (Experiment)
+  use_icon_as_answer_icon: false
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features: {}
+  graph:
+    edges:
+      - data: {sourceType: start, targetType: llm}
+        id: start-to-manager
+        source: start
+        sourceHandle: source
+        target: manager
+        targetHandle: target
+        type: custom
+      - data: {sourceType: llm, targetType: answer}
+        id: manager-to-answer
+        source: manager
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+    nodes:
+      - id: start
+        type: custom
+        data: {type: start, title: Start, desc: '', variables: []}
+        position: {x: 80, y: 282}
+        positionAbsolute: {x: 80, y: 282}
+        sourcePosition: right
+        targetPosition: left
+        width: 243
+        height: 53
+        selected: false
+      - id: manager
+        type: custom
+        data:
+          type: llm
+          title: Management decision and summary
+          desc: Uses the already-scored locator evidence. No independent scoring.
+          context: {enabled: false, variable_selector: []}
+          memory: {query_prompt_template: '', role_prefix: {assistant: '', user: ''}, window: {enabled: false, size: 10}}
+          model:
+            provider: openai
+            name: gpt-4o-mini
+            mode: chat
+            completion_params: {temperature: 0.1, top_p: 1, max_tokens: 1200}
+          prompt_template:
+            - role: system
+              text: |-
+                You are Lovis V4.0 L1 production-line management, prompt contract v1.1 (event schema lovis-v40-event-1.0; rule set AL-01-exp-1.1). You receive one JSON object with stage and incident. The station_candidates list is already ranked by the deterministic local locator. Never recalculate, reorder, or reinterpret ranking_score as probability. A candidate is an investigation lead, never a confirmed fault. Preserve supporting evidence, contradicting evidence, missing_data, warnings, and diagnosis_status. Scores are experimental rule points only.
+
+                For stage=dispatch, choose exactly one next_expert: robot_expert, motion_control_expert, press_expert, vision_expert, human_review, or none. If data are insufficient, evidence conflicts materially, no relevant station candidate exists, or only shared PLC evidence exists without a focused specialist clue, choose human_review. For S02-VG01/grip_ok/grip_vacuum/grip failure evidence choose robot_expert. For S02-SV01/servo_status or motion-control evidence choose motion_control_expert. For S03 press_force choose press_expert. For S04 vision_result choose vision_expert. Return JSON only: {"next_expert":"...","reason":"...","candidate_station_id":"...","verified_fault":false}.
+
+                For stage=summarize, summarize the expert's structured observations and recommended checks without adding a diagnosis. Keep uncertainty explicit. Return JSON only: {"summary":"...","verified_fault":false}.
+            - role: user
+              text: '{{#sys.query#}}'
+          vision: {enabled: false}
+          variables: []
+        position: {x: 380, y: 282}
+        positionAbsolute: {x: 380, y: 282}
+        sourcePosition: right
+        targetPosition: left
+        width: 300
+        height: 120
+        selected: false
+      - id: answer
+        type: custom
+        data: {type: answer, title: Structured agent response, desc: '', answer: '{{#manager.text#}}', variables: []}
+        position: {x: 760, y: 282}
+        positionAbsolute: {x: 760, y: 282}
+        sourcePosition: right
+        targetPosition: left
+        width: 243
+        height: 80
+        selected: false
+  rag_pipeline_variables: []
+version: '0.3.0'
+kind: app
+
