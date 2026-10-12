@@ -33,6 +33,7 @@ from ml_inference import predict_signal, MODEL_SHA256
 from dify_bridge import DifyBridgeError
 from lovis_bridge import ask_lovis, combine_question_with_vibration, vibration_summary
 from lovis_report import make_report
+from lovis_attachments import attachment_meta, source_rate_hint
 
 BASE = Path(__file__).resolve().parent
 st.set_page_config(page_title="智维AI V3.1 | Lovis智能诊断Agent",
@@ -101,8 +102,9 @@ def apply_active_chat(chat:dict) -> None:
     st.session_state.pop("lovis_analysis",None)  # MAT data and waveforms are ephemeral.
     # Requiring an explicit new attachment prevents samples from one
     # motor being silently treated as part of a different diagnosis.
-    st.session_state["lovis_data_source"]="暂不关联"
-    st.session_state.pop("lovis_mat_upload",None)
+    st.session_state.pop("lovis_attachment",None)
+    st.session_state.pop("lovis_csv_consent",None)
+    st.session_state.pop("lovis_offset_index",None)
 
 
 def save_active_chat() -> None:
@@ -344,60 +346,6 @@ with st.sidebar:
         st.caption("备份含聊天原文和Dify会话标识。请勿分享给他人；"
                    "原始MAT和波形不会随会话记录保存。")
     st.divider()
-    st.markdown("**关联数据（可选）**")
-    source=st.radio("数据来源",["暂不关联","CWRU内置示例","上传MAT文件"],label_visibility="collapsed",key="lovis_data_source")
-    if source=="CWRU内置示例":
-        manifest,samples,err=load_demo_once()
-        if err:
-            st.warning("官方演示数据暂时不可用，可上传MAT文件。")
-            if st.button("重新读取官方样本"):
-                load_demo_once.clear()
-                st.rerun()
-        else:
-            choices=manifest["samples"]
-            index=st.selectbox(
-                "选择实验记录",range(len(choices)),
-                format_func=lambda i: str(choices[i]["number"])+".mat · "+choices[i]["label"])
-            current_meta=dict(choices[index])
-            current_signal=samples[str(current_meta["number"])]
-            identity="demo-"+str(current_meta["number"])
-            st.caption("所选类别为实验台标签，不是模型预测。")
-    elif source=="上传MAT文件":
-        f=st.file_uploader("选择振动MAT",type=["mat"],key="lovis_mat_upload")
-        # CWRU Normal Baseline 97-100 is recorded at 48 kHz.
-        # Filename is only a hint: non-official or modified uploads still require confirmation.
-        known_cwru_normal=bool(f is not None and re.fullmatch(r"(97|98|99|100)\.mat",f.name,re.I))
-        hz=st.selectbox("原始采样率（须与文件真实采样率一致）",[12000,48000],
-                        index=1 if known_cwru_normal else 0,
-                        format_func=lambda a:f"{a:,} Hz",
-                        key="lovis_sample_rate_"+(f.name if f is not None else "none"))
-        if known_cwru_normal:
-            st.caption("检测到CWRU正常组文件名：已预选48 kHz；请核对来源后再分析。")
-        if f is not None:
-            content=f.getvalue()
-            if len(content)>25*1024*1024:
-                st.error("MAT文件不得大于25 MB。")
-            else:
-                try:
-                    arr,channel,rpm=read_uploaded_source(content,f.name)
-                    current_signal=to_analysis_fs(arr,hz)
-                    sha=hashlib.sha256(content).hexdigest()
-                    current_meta={
-                        "name":f.name,"source_url":"用户上传，未独立验证",
-                        "source_fs_hz":hz,"raw_sha256":sha,"rpm":rpm,
-                        "source_variable":channel,"label":"未知（用户上传）",
-                    }
-                    identity="uploaded-"+sha+"-"+str(hz)
-                    st.caption("读取成功；采样率由上传者确认。原文件不会发送给Dify。")
-                except Exception as exc:
-                    st.error("无法读取MAT："+str(exc))
-    if current_signal is not None and len(current_signal)>=WINDOW:
-        n_windows=len(current_signal)//WINDOW
-        offset_idx=st.slider("时域分析窗口",0,n_windows-1,0)
-        offset=offset_idx*WINDOW
-        identity+="-offset-"+str(offset)
-        st.info("仅关联数据；Lovis不会自动运行振动分类。请在对话中提出分析请求。")
-    st.divider()
     st.caption("**云端与隐私**")
     approved=st.checkbox("同意将本轮文字提问和脱敏计算摘要发送至Dify Cloud",value=False)
     st.caption("不向Dify上传MAT、原始波形、文件名、SHA-256。")
@@ -410,14 +358,52 @@ except (FileNotFoundError,KeyError):
     api_key=os.environ.get("DIFY_API_KEY","").strip()
     api_base="https://api.dify.ai/v1"
 
+
+def attach_mat_signal(attachment: dict):
+    """Build the signal only from the current conversation's transient attachment."""
+    hz=int(attachment["source_fs_hz"])
+    if "cached_signal" not in attachment or attachment.get("cached_hz")!=hz:
+        signal,channel,rpm=read_uploaded_source(attachment["content"],attachment["name"])
+        attachment["cached_signal"]=to_analysis_fs(signal,hz)
+        attachment["cached_hz"]=hz
+        attachment["channel"]=channel
+        attachment["rpm"]=rpm
+    arr=attachment["cached_signal"]
+    meta={"name":attachment["name"],
+          "source_url":"用户上传，未独立验证",
+          "source_fs_hz":hz,"raw_sha256":attachment["sha256"],
+          "rpm":attachment.get("rpm"),"source_variable":attachment.get("channel"),
+          "label":"未知（用户上传）"}
+    return arr,meta,"uploaded-"+attachment["sha256"]+"-"+str(hz)
+
+
+def get_active_vibration():
+    """Return active sample for the current chat. CSV isn't a vibration signal."""
+    attached=st.session_state.get("lovis_attachment")
+    if not isinstance(attached,dict):
+        return None,None,"none"
+    if attached["kind"]=="mat":
+        return attach_mat_signal(attached)
+    if attached["kind"]=="demo":
+        manifest,samples,err=load_demo_once()
+        if err:
+            raise ValueError("内置演示样本暂不可用："+str(err))
+        sample=next((item for item in manifest["samples"]
+                     if int(item["number"])==int(attached["number"])),None)
+        if sample is None:
+            raise ValueError("演示样本编号不存在")
+        return samples[str(sample["number"])],dict(sample),"demo-"+str(sample["number"])
+    return None,None,"none"
+
+
 st.markdown("""<div class="lovis-hero">
 <h2>🤖 你好，我是 Lovis</h2>
-<p>你的工业电机智能辅助诊断助手。直接描述问题；如果需要数据分析，可在左侧关联振动样本，
-再通过对话让我开始分析。温度、电流和知识咨询也可以直接输入。</p></div>""",unsafe_allow_html=True)
+<p>你的工业电机智能辅助诊断助手。直接描述问题；如果需要数据分析，点击聊天框左侧的＋上传MAT或CSV文件；
+也可在输入框上方选择CWRU演示数据。分析仅在明确请求后执行。</p></div>""",unsafe_allow_html=True)
 st.caption("Lovis V3.1 开发预览 · 对话是主入口 · 结果按需展开 · 卡通形象待设计")
 if not st.session_state.lovis_messages:
     with st.chat_message("assistant",avatar="🤖"):
-        st.markdown("你好！我可以帮助分析轴承振动、温度电流变化、运行参数，以及查询工业电机维护知识。请描述现象，或先在侧边栏关联测量数据。必要信息不足时，我会先追问。")
+        st.markdown("你好！我可以帮助分析轴承振动、温度电流变化、运行参数，以及查询工业电机维护知识。请描述现象，或使用聊天框左侧的＋上传数据。没有文件时也可以直接咨询；信息不足我会先追问。")
 
 example_text=None
 if not st.session_state.lovis_messages:
@@ -435,11 +421,114 @@ for msg in st.session_state.lovis_messages:
         if msg.get("tools"):
             st.caption("Dify已核验工具调用："+", ".join(msg["tools"])+"｜来源："+msg.get("tool_trace_source","Dify工具记录"))
 
-question=st.chat_input("向Lovis描述问题、追加运行信息，或请求分析已关联的振动数据…")
-message=question or example_text
+# Data choices now live beside the composer, not in the history sidebar.
+# The native Streamlit chat-input "+" provides the actual upload picker.
+with st.popover("📂 数据与演示样本",help="上传请点击下方聊天框左侧的＋；这里可选CWRU演示数据并核对采样率"):
+    st.caption("上传文件：点击聊天框左侧＋，选择MAT振动数据或CSV运行趋势。")
+    with st.expander("选择CWRU内置振动演示",expanded=False):
+        if st.button("加载官方CWRU演示目录",key="lovis_load_demo"):
+            st.session_state.lovis_show_demo=True
+        if st.session_state.get("lovis_show_demo"):
+            manifest,samples,err=load_demo_once()
+            if err:
+                st.warning("演示数据暂不可用："+err)
+            else:
+                entries=manifest["samples"]
+                demo_choice=st.selectbox(
+                    "公开实验台样本",range(len(entries)),
+                    format_func=lambda i:f"{entries[i]['number']}.mat · {entries[i]['label']}",
+                    key="lovis_demo_choice")
+                if st.button("关联选中的演示样本",key="lovis_attach_demo"):
+                    st.session_state.lovis_attachment={"kind":"demo","number":int(entries[demo_choice]["number"])}
+                    st.session_state.pop("lovis_analysis",None)
+                    st.rerun()
+    attached=st.session_state.get("lovis_attachment")
+    if attached and attached["kind"]=="mat":
+        st.caption("已上传MAT；请确认原始采样率。")
+        rates=[12000,48000]
+        original=int(attached["source_fs_hz"])
+        rate=st.selectbox("原始采样率（Hz）",rates,index=rates.index(original)
+                          if original in rates else 0,key="lovis_mat_rate_selector")
+        if rate!=original:
+            attached["source_fs_hz"]=rate
+            attached.pop("cached_signal",None)
+            st.session_state.pop("lovis_analysis",None)
+            st.rerun()
+        if source_rate_hint(attached["name"])==48000:
+            st.caption("已根据CWRU正常组文件名预选48kHz，仍需确认真实来源。")
+    if attached and attached["kind"]=="csv":
+        st.caption(f"当前CSV有{attached['rows']}条时序记录。")
+        st.checkbox("允许将CSV中的数值记录发送给Dify调用趋势工具",
+                    key="lovis_csv_consent",value=False,
+                    help="包含运行时间、电流、温度值；不包含文件名和哈希。关闭时绝不发送CSV原始数值。")
+    if attached:
+        if st.button("移除已关联数据",key="lovis_clear_attachment"):
+            st.session_state.pop("lovis_attachment",None)
+            st.session_state.pop("lovis_analysis",None)
+            st.session_state.pop("lovis_csv_consent",None)
+            st.session_state.pop("lovis_offset_index",None)
+            st.rerun()
 
+try:
+    current_signal,current_meta,identity=get_active_vibration()
+except Exception as exc:
+    st.error("关联的振动数据解析失败："+str(exc))
+    current_signal,current_meta,identity=None,None,"none"
+
+attached=st.session_state.get("lovis_attachment")
+if attached:
+    source_label=("CWRU演示 "+str(attached["number"])+".mat" if attached["kind"]=="demo"
+                  else ("MAT振动数据" if attached["kind"]=="mat" else "CSV运行趋势数据"))
+    st.caption("📎 当前会话已关联："+source_label+"。不会随对话自动上传原始MAT。"
+               "如需修改采样率、选择示例或移除文件，请展开上方「数据与演示样本」。")
+if current_signal is not None:
+    max_index=max(0,len(current_signal)//WINDOW-1)
+    # Keep an optional setting off the history sidebar.
+    with st.expander("振动分析设置（按需展开）",expanded=False):
+        st.slider("分析波形窗口",0,max_index,0,key="lovis_offset_index")
+    offset=int(st.session_state.get("lovis_offset_index",0))*WINDOW
+    identity=identity+"-offset-"+str(offset)
+
+submission=st.chat_input(
+    "向Lovis提问，或点击左侧＋上传MAT / CSV数据…",
+    accept_file=True,file_type=["mat","csv"],max_chars=5000,
+    key="lovis_chat_composer"
+)
+question=(submission.text if submission else None)
+uploads=(submission.files if submission else [])
+if uploads:
+    file=uploads[0]
+    if len(file.getvalue())>25*1024*1024:
+        st.error("上传文件超出大小限制（MAT最大25MB，CSV最大64KB）。")
+        st.stop()
+    try:
+        new_attachment=attachment_meta(file.name,file.getvalue())
+        if new_attachment["kind"]=="mat":
+            # Parse immediately, never send raw contents to Dify.
+            attach_mat_signal(new_attachment)
+        st.session_state.lovis_attachment=new_attachment
+        st.session_state.pop("lovis_analysis",None)
+        st.session_state.pop("lovis_csv_consent",None)
+        st.session_state.pop("lovis_offset_index",None)
+    except (ValueError,TypeError) as exc:
+        st.error("文件上传失败："+str(exc))
+        st.stop()
+    # If only a file is submitted, treat it as data association not a chat turn.
+    # Re-render status so the visitor can approve CSV disclosure or set MAT rate.
+    if not (question or "").strip():
+        st.rerun()
+
+message=(question or example_text)
 if message:
     message=str(message).strip()
+    # File attachments are transient and scoped to the active conversation.
+    # A new file in the same submission must be visible to the analysis path.
+    if uploads:
+        attached=st.session_state.lovis_attachment
+        if attached["kind"] in ("mat","demo"):
+            current_signal,current_meta,identity=get_active_vibration()
+            offset=0
+            identity=identity+"-offset-0"
     if len(message)>5000:
         st.error("请将本轮输入控制在5000字符内。")
     else:
@@ -448,7 +537,7 @@ if message:
         current_analysis=st.session_state.get("lovis_analysis")
         if wants_vibration_analysis(message):
             if current_signal is None or current_meta is None:
-                local_msg="尚未关联有效振动数据。请在左侧选择示例或上传MAT，再告诉我“分析这份振动数据”。"
+                local_msg="尚未关联有效振动数据。点击聊天框左侧＋上传MAT，或通过「数据与演示样本」选择CWRU示例，再请求分析。"
             else:
                 try:
                     current_analysis=local_analysis(current_signal,current_meta,offset,identity)
@@ -477,7 +566,17 @@ if message:
             ):
                 summary=vibration_summary(current_analysis["meta"],current_analysis["result"],
                                            current_analysis.get("classification"))
-            query=combine_question_with_vibration(message,summary)
+            csv_data=st.session_state.get("lovis_attachment")
+            if isinstance(csv_data,dict) and csv_data.get("kind")=="csv" and (
+                "趋势" in message or "分析" in message or "温度" in message or "电流" in message
+            ):
+                if st.session_state.get("lovis_csv_consent",False):
+                    query=message+"\n\n以下是用户明确授权提交给趋势分析工具的CSV运行数值（非MAT，原始文件名和SHA不发送）：\n"+csv_data["csv"]
+                    query+="\n请调用motor_trend_analysis_v23；不存在历史基线时不要编造。"
+                else:
+                    query=message+"\n\n用户已上传CSV趋势数据，但尚未同意传输其中的数值。请提示用户展开「数据与演示样本」，勾选允许发送CSV数值后再请求趋势分析，不要猜测结果。"
+            else:
+                query=combine_question_with_vibration(message,summary)
             st.session_state.lovis_calls+=1
             with st.spinner("Lovis正在处理你的问题，并按需调用Dify现有工具……"):
                 try:
