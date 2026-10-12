@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import base64
 import os
 import re
 import uuid
@@ -37,28 +38,71 @@ from lovis_attachments import attachment_meta, source_rate_hint
 
 BASE = Path(__file__).resolve().parent
 st.set_page_config(page_title="智维AI V3.1 | Lovis智能诊断Agent",
-                   page_icon="🤖",layout="wide",initial_sidebar_state="expanded")
+                   page_icon="🩵",layout="wide",initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-.block-container {max-width:1450px; padding-top:1.25rem; padding-bottom:2rem}
-.lovis-hero {background:linear-gradient(115deg,#eef5ff,#f7faff);border:1px solid #dbe8ff;
-  border-radius:19px;padding:21px 25px;margin:5px 0 18px}
-.lovis-hero h2 {font-size:1.75rem;margin:0 0 8px;color:#19365f}
-.lovis-hero p {color:#4f6687;font-size:0.95rem;margin:0}
-.small-tag {font-size:0.8rem;color:#506987}
-[data-testid="stMetric"] {border:1px solid #e1e8f0;border-radius:10px;padding:9px}
+:root {--lovis-primary:#4f83ed;--lovis-deep:#173a78;--lovis-blue:#8db7fa;
+  --lovis-pale:#eef5ff;--lovis-card:#f8fbff;--lovis-muted:#667b9e;
+  --lovis-line:#c9dcff;--lovis-shadow:0 12px 34px rgba(47,105,190,.08)}
+.block-container {max-width:1500px;padding:1.2rem 1.6rem 7rem}
+section[data-testid="stSidebar"] {background:linear-gradient(180deg,#edf5ff 0%,#f6faff 58%,#eef5ff 100%);border-right:1px solid #dfebff}
+section[data-testid="stSidebar"] > div {padding-top:1.2rem}
+section[data-testid="stSidebar"] [data-testid="stExpander"] {border:1px solid #c9dcff;border-radius:13px;background:#f8fbff}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {color:var(--lovis-deep);font-weight:650}
+.lovis-brand {display:flex;align-items:center;gap:12px;margin:0 0 18px}
+.lovis-brand img {width:76px;height:76px;object-fit:cover;border-radius:50%;border:2px solid white;box-shadow:0 4px 15px #90b9ef66}
+.lovis-brand-title {font-size:1.55rem;line-height:1.1;font-weight:750;color:var(--lovis-deep)}
+.lovis-brand-sub {font-size:.76rem;color:var(--lovis-muted);margin-top:5px}
+div[class*="st-key-lovis_hero_shell"] {border:1px solid #c9defe;border-radius:25px;overflow:hidden;
+  background:radial-gradient(ellipse at 86% 12%,#fff 0,transparent 32%),linear-gradient(112deg,#dceaff 0%,#f7fbff 57%,#e7f2ff 100%);
+  box-shadow:var(--lovis-shadow);padding:12px 24px 4px;position:relative}
+div[class*="st-key-lovis_hero_shell"]:after {content:"✦";position:absolute;right:7%;top:16%;color:#9fc4ff88;font-size:22px;pointer-events:none}
+div[class*="st-key-lovis_hero_art"] img {width:100%;max-height:315px;object-fit:contain;object-position:center bottom;mix-blend-mode:multiply;
+  -webkit-mask-image:radial-gradient(ellipse 77% 71% at 50% 50%,#000 57%,rgba(0,0,0,.9) 70%,transparent 100%);
+  mask-image:radial-gradient(ellipse 77% 71% at 50% 50%,#000 57%,rgba(0,0,0,.9) 70%,transparent 100%)}
+.lovis-hero-copy {padding:28px 20px 30px 8px}
+.lovis-hero-copy h2 {font-size:clamp(1.7rem,2.5vw,2.35rem);margin:0 0 14px;color:var(--lovis-deep);letter-spacing:.01em}
+.lovis-hero-copy p {color:#355987;font-size:1rem;line-height:1.95;margin:0;max-width:760px}
+.lovis-subtitle {color:#8194b1;font-size:.82rem;margin:10px 2px 16px}
+div[class*="st-key-lovis_home_welcome"] [data-testid="stChatMessage"] {border:1px solid #dce9fb;background:linear-gradient(110deg,#f7fbff,#fff);border-radius:17px;padding:16px 20px;box-shadow:0 4px 18px #4576b00c}
+div[class*="st-key-lovis_home_welcome"] [data-testid="stChatMessage"] p {color:#244675;line-height:1.8}
+[data-testid="stChatMessage"] {gap:.75rem}
+[data-testid="stChatMessage"] [data-testid="stMarkdown"] {line-height:1.72}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {background:#f5f9ff;border:1px solid #e2edfc;border-radius:16px;padding:12px 16px}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {background:#edf4ff;border:1px solid #d5e5ff;border-radius:16px;padding:12px 16px}
+[data-testid="stChatMessage"] img {border-radius:50%;border:1px solid #d7e6fb}
+[data-testid="stMetric"] {border:1px solid #dbe8f8;border-radius:14px;padding:9px;background:#fafdff}
+div[data-testid="stChatInput"] {position:sticky;bottom:10px;z-index:100;background:#fff;border:1.5px solid #c4dcff;border-radius:22px;box-shadow:0 8px 30px #4f83ed22;padding:5px}
+div[data-testid="stChatInput"] textarea {color:var(--lovis-deep)}
+div[data-testid="stChatInput"] button {background:var(--lovis-primary);color:white;border-radius:14px}
+div[data-testid="stChatInput"] button:hover {background:#376edb;color:white}
+div[data-testid="stPopover"] > button {border:1px solid var(--lovis-line)!important;border-radius:12px!important;color:var(--lovis-deep)!important;background:#fafdff!important}
+div[data-testid="stPopover"] > button:hover {background:#eef5ff!important;border-color:#8db7fa!important}
+div[class*="st-key-lovis_shortcuts"] [data-testid="stButton"] button {min-height:3.2rem;border:1px solid #a9cbff;background:#fbfdff;color:var(--lovis-deep);border-radius:14px;font-weight:600;box-shadow:0 3px 12px #427bc00a;transition:background .15s,border-color .15s,transform .15s}
+div[class*="st-key-lovis_shortcuts"] [data-testid="stButton"] button:hover {background:#edf5ff;border-color:#78a9f5;transform:translateY(-1px)}
+.lovis-data-label {color:var(--lovis-deep);font-size:.91rem;font-weight:650}
+@media(max-width:760px) {
+ .block-container {padding:.75rem .75rem 6rem}
+ div[class*="st-key-lovis_hero_shell"] {padding:8px 14px 12px}
+ div[class*="st-key-lovis_hero_art"] img {max-height:255px}
+ .lovis-hero-copy {padding:8px 6px 16px}
+ .lovis-hero-copy p {font-size:.93rem;line-height:1.75}
+ .lovis-brand img {width:60px;height:60px}
+ div[data-testid="stChatInput"] {bottom:4px}
+ div[class*="st-key-lovis_shortcuts"] [data-testid="stHorizontalBlock"] {flex-direction:column;gap:.35rem}
+}
 /* History row resembles ChatGPT: full-width title and discreet action dots. */
 div[class*="st-key-lovis_chat_row_"] {
-  border-radius:0.55rem;padding:1px 2px;
+  border-radius:0.65rem;padding:1px 2px;
 }
 div[class*="st-key-lovis_chat_row_"]:hover {
-  background:rgba(125,135,151,0.12);
+  background:rgba(141,183,250,0.18);
 }
 div[class*="st-key-lovis_chat_row_active_"] {
-  background:rgba(82,131,212,0.17);
+  background:rgba(141,183,250,0.28);
 }
 div[class*="st-key-lovis_chat_row_active_"]:hover {
-  background:rgba(82,131,212,0.22);
+  background:rgba(141,183,250,0.38);
 }
 /* The row title is always a secondary button: a primary button renders
    white text that disappears when the custom background is transparent. */
@@ -66,6 +110,7 @@ div[class*="st-key-lovis_chat_row_"] [data-testid="stButton"] button {
   text-align:left;justify-content:flex-start;overflow:hidden;
   border:0;background:transparent;box-shadow:none;
   color:var(--text-color,#1f2937) !important;
+  color:var(--lovis-deep,#173a78) !important;
   opacity:1 !important;
 }
 div[class*="st-key-lovis_chat_row_"] [data-testid="stButton"] button * {
@@ -342,8 +387,13 @@ current_meta=None
 offset=0
 identity="none"
 with st.sidebar:
-    st.markdown("### 🤖 Lovis")
-    st.caption("智维AI · 工业电机智能辅助诊断")
+    avatar_data="data:image/webp;base64,"+base64.b64encode((BASE/"assets"/"lovis_avatar.webp").read_bytes()).decode("ascii")
+    st.markdown(
+        '<div class="lovis-brand"><img src="'+avatar_data+'" alt="Lovis角色头像">'
+        '<div><div class="lovis-brand-title">Lovis</div>'
+        '<div class="lovis-brand-sub">智维AI · 工业电机智能辅助诊断</div></div></div>',
+        unsafe_allow_html=True,
+    )
     if st.button("＋ 开始新对话",use_container_width=True):
         try:
             create_chat()
@@ -429,10 +479,9 @@ with st.sidebar:
         st.caption("备份含聊天原文和Dify会话标识。请勿分享给他人；"
                    "原始MAT和波形不会随会话记录保存。")
     st.divider()
-    st.caption("**云端与隐私**")
+    st.markdown('<div class="lovis-data-label">◈ 云端与隐私</div>',unsafe_allow_html=True)
     approved=st.checkbox("同意将本轮文字提问和脱敏计算摘要发送至Dify Cloud",value=False)
-    st.caption("MAT、原始波形、文件名及SHA-256不发送至Dify；CSV运行数值仅在另行授权后发送。")
-    st.caption("公开实验台研究原型，不能代替现场故障确诊。")
+    st.info("MAT、原始波形、文件名及SHA-256不发送至Dify；CSV运行数值仅在另行授权后发送。\n\n公开实验台研究原型，不能代替现场故障确诊。")
 
 if st.session_state.get("lovis_action_target"):
     edit_history_dialog()
@@ -482,34 +531,42 @@ def get_active_vibration():
     return None,None,"none"
 
 
-st.markdown("""<div class="lovis-hero">
-<h2>🤖 你好，我是 Lovis</h2>
-<p>你的工业电机智能辅助诊断助手。直接描述问题；如果需要数据分析，点击聊天框左侧的＋上传MAT或CSV文件；
-也可在输入框上方选择CWRU演示数据。分析仅在明确请求后执行。</p></div>""",unsafe_allow_html=True)
-st.caption("Lovis V3.1 开发预览 · 对话是主入口 · 结果按需展开 · 卡通形象待设计")
+with st.container(key="lovis_hero_shell"):
+    art_col,copy_col=st.columns([0.38,0.62],gap="small",vertical_alignment="center")
+    with art_col:
+        with st.container(key="lovis_hero_art"):
+            st.image(str(BASE/"assets"/"lovis_hero.webp"),use_container_width=True)
+    with copy_col:
+        st.markdown("""<div class="lovis-hero-copy">
+<h2>你好，我是 Lovis</h2>
+<p>你的工业电机智能辅助诊断助手。直接描述问题；如果需要数据分析，点击聊天框左侧的＋上传MAT或CSV文件；也可以在输入框上方选择CWRU演示数据。分析仅在明确请求后执行。</p>
+</div>""",unsafe_allow_html=True)
+st.markdown('<div class="lovis-subtitle">Lovis V3.1 · 工业电机智能辅助诊断</div>',unsafe_allow_html=True)
 if not st.session_state.lovis_messages:
-    with st.chat_message("assistant",avatar="🤖"):
+    with st.container(key="lovis_home_welcome"):
+      with st.chat_message("assistant",avatar=str(BASE/"assets"/"lovis_avatar.webp")):
         st.markdown("你好！我可以帮助分析轴承振动、温度电流变化、运行参数，以及查询工业电机维护知识。请描述现象，或使用聊天框左侧的＋上传数据。没有文件时也可以直接咨询；信息不足我会先追问。")
 
 example_text=None
 if not st.session_state.lovis_messages:
-    k1,k2,k3=st.columns(3)
-    if k1.button("咨询轴承异响",use_container_width=True):
-        example_text="电机运行中有轴承异响，但没有测量数据。应该先确认哪些信息？"
-    if k2.button("分析所选振动",use_container_width=True):
-        example_text="请分析当前选中的振动样本，并解释模型预测的证据和局限。"
-    if k3.button("询问温升趋势",use_container_width=True):
-        example_text="如果轴承温度连续上涨，要提供哪些时序数据才能进行趋势分析？"
+    with st.container(key="lovis_shortcuts"):
+        k1,k2,k3=st.columns(3)
+        if k1.button("◉  咨询轴承异响　›",use_container_width=True):
+            example_text="电机运行中有轴承异响，但没有测量数据。应该先确认哪些信息？"
+        if k2.button("⌁  分析所选振动　›",use_container_width=True):
+            example_text="请分析当前选中的振动样本，并解释模型预测的证据和局限。"
+        if k3.button("▥  询问温升趋势　›",use_container_width=True):
+            example_text="如果轴承温度连续上涨，要提供哪些时序数据才能进行趋势分析？"
 
 for msg in st.session_state.lovis_messages:
-    with st.chat_message(msg["role"],avatar="🤖" if msg["role"]=="assistant" else "👤"):
+    with st.chat_message(msg["role"],avatar=str(BASE/"assets"/"lovis_avatar.webp") if msg["role"]=="assistant" else "👤"):
         st.markdown(msg["content"])
         if msg.get("tools"):
             st.caption("Dify已核验工具调用："+", ".join(msg["tools"])+"｜来源："+msg.get("tool_trace_source","Dify工具记录"))
 
 # Data choices now live beside the composer, not in the history sidebar.
 # The native Streamlit chat-input "+" provides the actual upload picker.
-with st.popover("📂 数据与演示样本",help="上传请点击下方聊天框左侧的＋；这里可选CWRU演示数据并核对采样率"):
+with st.popover("◈ 数据与演示样本　⌄",help="上传请点击下方聊天框左侧的＋；这里可选CWRU演示数据并核对采样率"):
     st.caption("上传文件：点击聊天框左侧＋，选择MAT振动数据或CSV运行趋势。")
     with st.expander("选择CWRU内置振动演示",expanded=False):
         if st.button("加载官方CWRU演示目录",key="lovis_load_demo"):
