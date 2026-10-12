@@ -1,13 +1,16 @@
 """Standalone Streamlit entry point: streamlit run lovis_v40/streamlit_app.py"""
 import json
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import streamlit as st
 
-from line_fault_locator import locate_faults
 from lovis_v40.integration import IntegrationError, analyze
 
-ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "v40"
 TOPO = json.loads((CONFIG / "topology.json").read_text(encoding="utf-8"))
 SIGNALS = json.loads((CONFIG / "signal_dictionary.json").read_text(encoding="utf-8"))
