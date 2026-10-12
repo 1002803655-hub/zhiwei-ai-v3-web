@@ -1,0 +1,13 @@
+{
+  "alarms": {
+    "S01_NO_FEED": {"description": "实验规则：上料未就绪"},
+    "S02_GRIP_FAIL": {"description": "实验规则：抓取失败"},
+    "S02_SERVO_FAULT": {"description": "实验规则：机器人伺服异常"},
+    "S03_PART_MISSING": {"description": "实验规则：工件缺失"},
+    "S03_PRESS_FORCE": {"description": "实验规则：压装力偏离配置范围"},
+    "S04_VISION_NG": {"description": "实验规则：视觉判定异常"},
+    "PLC_INTERLOCK": {"description": "实验规则：PLC联锁"},
+    "PLC_FAULT": {"description": "实验规则：共享PLC控制异常"}
+  }
+}
+

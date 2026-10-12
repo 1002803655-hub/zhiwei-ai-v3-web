@@ -1,0 +1,12 @@
+{
+  "line_id": "AL-01",
+  "stations": [
+    {"station_id": "S01", "name": "自动上料", "components": ["S01-FE01", "S01-CV01"]},
+    {"station_id": "S02", "name": "机械臂搬运", "components": ["S02-RB01", "S02-VG01", "S02-SV01"]},
+    {"station_id": "S03", "name": "伺服压装", "components": ["S03-SV01", "S03-PE01", "S03-LC01"]},
+    {"station_id": "S04", "name": "视觉检测", "components": ["S04-CAM01"]}
+  ],
+  "material_flow": [["S01", "S02"], ["S02", "S03"], ["S03", "S04"]],
+  "shared_components": ["PLC01"]
+}
+
