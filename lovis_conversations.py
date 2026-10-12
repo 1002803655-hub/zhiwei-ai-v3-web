@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from lovis_history import validate_snapshot as validate_legacy
 
-STORAGE_KEY_V2 = "lovis_v31_browser_history_v2"
+STORAGE_KEY_V2 = "lovis_v31_browser_history_v1"  # same browser slot; migrate schema 1 in place
 MAX_CHATS = 24
 MAX_MESSAGES = 60
 MAX_TEXT = 10000
@@ -204,17 +204,22 @@ def validate_store(raw) -> dict:
             not isinstance(t,str) or not TOOL_RE.fullmatch(t) for t in events
         ):
             raise ValueError("工具事件不合法")
-        clean = dict(ch)
-        clean.update({
-            "title":normalize_title(title),
-            "messages":clean_msgs,
-            "recent_tool_events":events,
-            "recent_tool_trace_source":str(ch.get("recent_tool_trace_source",""))[:120],
-        })
         for key in ("created_at","updated_at"):
             if not isinstance(ch.get(key),str) or len(ch[key])>70:
                 raise ValueError("会话时间无效")
-        cleaned.append(clean)
+        # Whitelist the archive format; imported JSON cannot inject unrelated
+        # local/private fields into browser storage or subsequent backups.
+        cleaned.append({
+            "id":ch["id"],
+            "title":normalize_title(title),
+            "messages":clean_msgs,
+            "dify_user":user,
+            "dify_conversation_id":conv,
+            "recent_tool_events":events,
+            "recent_tool_trace_source":str(ch.get("recent_tool_trace_source",""))[:120],
+            "created_at":ch["created_at"],
+            "updated_at":ch["updated_at"],
+        })
     active=raw.get("active_id")
     if active not in ids:
         raise ValueError("当前会话标识无法匹配")
