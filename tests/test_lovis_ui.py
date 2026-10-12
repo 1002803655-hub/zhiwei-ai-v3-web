@@ -79,6 +79,26 @@ class HomeTests(unittest.TestCase):
                              {"mode":"rename","id":first})
             self.assertEqual(app.session_state["lovis_chat_store"]["active_id"],second)
 
+    def test_deletion_requires_confirmation_and_preserves_other_chat(self):
+        with patch("streamlit_local_storage.LocalStorage",FakeBrowserStorage):
+            app=AppTest.from_file(app_path(),default_timeout=25).run()
+            first=app.session_state["lovis_chat_store"]["active_id"]
+            app=next(b for b in app.button if b.label=="＋ 开始新对话").click().run()
+            second=app.session_state["lovis_chat_store"]["active_id"]
+            app=next(b for b in app.button if b.key=="lovis_menu_delete_"+first).click().run()
+            self.assertEqual(len(app.exception),0)
+            self.assertEqual(len(app.session_state["lovis_chat_store"]["chats"]),2)
+            self.assertEqual(app.session_state["lovis_action_target"],
+                             {"mode":"delete","id":first})
+            confirm=[b for b in app.button if b.label=="确认删除"]
+            self.assertEqual(len(confirm),1)
+            app=confirm[0].click().run()
+            self.assertEqual(len(app.exception),0)
+            remaining=app.session_state["lovis_chat_store"]
+            self.assertEqual(len(remaining["chats"]),1)
+            self.assertEqual(remaining["active_id"],second)
+            self.assertEqual(remaining["chats"][0]["id"],second)
+
     def test_reopening_page_restores_browser_chat(self):
         from lovis_history import STORAGE_KEY
         backup=build_snapshot(
