@@ -12,7 +12,7 @@
 
 ## 管理Agent协同升级
 
-`management_agent.dsl.v1.1.backup.yml` 保存本次修改前的管理Agent DSL；`management_agent.dsl.yml` 是 followup v1.2 导入候选。仅导入为新的独立实验应用，不覆盖已验证线上应用。本次也为两个专家 DSL 准备了 v1.2 独立导入候选，要求输出标准化 `assessment`（abnormal/normal/inconclusive）以比较跨专家对同一事件的判断；`robot_expert_workflow.dsl.v1.1.backup.yml` 与 `motion_control_expert_workflow.dsl.v1.1.backup.yml` 保存修改前版本。旧线上专家响应不含该字段时仍兼容，但无法据此判断语义冲突。
+`management_agent.dsl.v1.1.backup.yml` 保存本次修改前的管理Agent DSL；`management_agent.dsl.yml` 是 followup v1.2 导入候选。仅导入为新的独立实验应用，不覆盖已验证线上应用。本次也为两个专家 DSL 准备了 v1.2 独立导入候选，要求输出标准化 `assessment`（abnormal/normal/inconclusive）以比较跨专家对同一事件的判断；机器人和运动控制 v1.2 导入候选分别为 `robot_expert_workflow.v1.2.dsl.yml` 与 `motion_control_expert_workflow.v1.2.dsl.yml`；它们是新文件，原有专家 DSL 不变。旧线上专家响应不含该字段时仍兼容，但无法据此判断语义冲突。
 
 ## 导入Dify实验DSL
 
@@ -21,8 +21,8 @@
 依次将以下文件通过 Dify Studio 的 DSL 导入功能导入为**新应用**，不要选择覆盖现有应用：
 
 - `management_agent.dsl.yml`：V4.0管理Agent实验应用。
-- `robot_expert_workflow.dsl.yml`：机器人/真空夹爪专家工作流。
-- `motion_control_expert_workflow.dsl.yml`：运动控制专家工作流。
+- `robot_expert_workflow.v1.2.dsl.yml`：增加标准化评估字段的机器人/真空夹爪专家工作流候选。
+- `motion_control_expert_workflow.v1.2.dsl.yml`：增加标准化评估字段的运动控制专家工作流候选。
 
 管理Agent DSL 的旧版备份为 `management_agent.dsl.v1.1.backup.yml`。升级时将 `management_agent.dsl.yml` 导入为新实验应用，检查提示词包含 `stage=followup` 契约；不得覆盖旧应用。导入后为每个应用选择当前租户已配置的模型供应商/模型，保存并使用平台测试运行验证各自的输入输出。机器人及运动控制工作流先提供可导入的结构化复核模板；需按现场维护规范补充专家知识和检查流程。压装与视觉分支目前仅预留配置键和Agent路由接口，尚无工作流DSL。
 
