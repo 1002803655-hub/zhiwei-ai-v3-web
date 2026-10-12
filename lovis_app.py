@@ -47,6 +47,24 @@ st.markdown("""
 .lovis-hero p {color:#4f6687;font-size:0.95rem;margin:0}
 .small-tag {font-size:0.8rem;color:#506987}
 [data-testid="stMetric"] {border:1px solid #e1e8f0;border-radius:10px;padding:9px}
+/* History row resembles ChatGPT: full-width title and discreet action dots. */
+div[class*="st-key-lovis_chat_row_"] {border-radius:0.55rem;padding:1px 2px}
+div[class*="st-key-lovis_chat_row_"]:hover {background:rgba(125,135,151,0.09)}
+div[class*="st-key-lovis_chat_row_"] [data-testid="stButton"] button {
+  text-align:left;justify-content:flex-start;overflow:hidden;
+  border:0;background:transparent;box-shadow:none;
+}
+div[class*="st-key-lovis_chat_row_"] [data-testid="stPopover"] button {
+  opacity:0.06;min-height:2rem;padding:0.1rem 0.25rem;
+  border:0;background:transparent;box-shadow:none;
+}
+div[class*="st-key-lovis_chat_row_"]:hover [data-testid="stPopover"] button,
+div[class*="st-key-lovis_chat_row_"]:focus-within [data-testid="stPopover"] button {
+  opacity:1;
+}
+@media (hover:none),(pointer:coarse) {
+  div[class*="st-key-lovis_chat_row_"] [data-testid="stPopover"] button {opacity:1}
+}
 </style>
 """,unsafe_allow_html=True)
 
@@ -141,6 +159,51 @@ def create_chat() -> None:
     st.session_state.lovis_archive_dirty=True
     st.rerun()
 
+
+
+@st.dialog("管理历史对话",width="small")
+def edit_history_dialog():
+    """Rename or delete precisely the chat chosen from its ellipsis menu."""
+    action=st.session_state.get("lovis_action_target")
+    if not isinstance(action,dict):
+        return
+    archive=st.session_state.lovis_chat_store
+    target_id=action.get("id")
+    target=next((c for c in archive["chats"] if c["id"]==target_id),None)
+    if target is None:
+        st.warning("这段对话已不存在，请关闭窗口后刷新。")
+        return
+    if action.get("mode")=="rename":
+        st.write("重命名：**"+target["title"]+"**")
+        with st.form("lovis_rename_form"):
+            renamed=st.text_input("对话名称",value=target["title"],max_chars=40)
+            ok=st.form_submit_button("保存名称",use_container_width=True)
+        if ok:
+            try:
+                save_active_chat()
+                rename_chat(archive,target_id,renamed)
+                st.session_state.lovis_archive_dirty=True
+                st.session_state.pop("lovis_action_target",None)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+    elif action.get("mode")=="delete":
+        st.warning("确定删除以下历史对话吗？此操作不可撤销。")
+        st.write("**"+target["title"]+"**")
+        st.caption("本次删除只影响Lovis浏览器中的本地历史记录，不会删除Dify云端日志。")
+        left,right=st.columns(2)
+        if left.button("取消",key="lovis_cancel_delete",use_container_width=True):
+            st.session_state.pop("lovis_action_target",None)
+            st.rerun()
+        if right.button("确认删除",key="lovis_confirm_delete",type="primary",use_container_width=True):
+            save_active_chat()
+            deleting_active=archive["active_id"]==target_id
+            delete_chat(archive,target_id)
+            if deleting_active:
+                apply_active_chat(active_chat(archive))
+            st.session_state.lovis_archive_dirty=True
+            st.session_state.pop("lovis_action_target",None)
+            st.rerun()
 
 
 def wants_vibration_analysis(question:str)->bool:
@@ -269,30 +332,29 @@ with st.sidebar:
     archive=st.session_state.lovis_chat_store
     for ch in sorted(archive["chats"],key=lambda c:c["updated_at"],reverse=True):
         active = (ch["id"] == archive["active_id"])
-        label = ("▸ " if active else "💬 ") + ch["title"]
-        if st.button(label,key="lovis_select_"+ch["id"],
-                     help="切换到此独立对话",use_container_width=True,
-                     type="primary" if active else "secondary"):
-            if not active:
-                activate_chat(ch["id"])
-    with st.expander("管理会话 / 备份与恢复",expanded=False):
+        # Each history row owns a small ellipsis action menu. On desktop it
+        # appears on hover/focus; on touchscreens it is always visible.
+        with st.container(key="lovis_chat_row_"+ch["id"]):
+            name_col,menu_col=st.columns([0.83,0.17],gap="small",vertical_alignment="center")
+            with name_col:
+                label = ("▸ " if active else "") + ch["title"]
+                if st.button(label,key="lovis_select_"+ch["id"],
+                             help="打开该历史对话",use_container_width=True,
+                             type="primary" if active else "secondary"):
+                    if not active:
+                        activate_chat(ch["id"])
+            with menu_col:
+                with st.popover("⋯",help="该对话的更多操作",use_container_width=True):
+                    st.caption(ch["title"])
+                    if st.button("✏️ 重命名",key="lovis_menu_rename_"+ch["id"],use_container_width=True):
+                        st.session_state.lovis_action_target={"mode":"rename","id":ch["id"]}
+                        st.rerun()
+                    if st.button("🗑 删除",key="lovis_menu_delete_"+ch["id"],use_container_width=True):
+                        st.session_state.lovis_action_target={"mode":"delete","id":ch["id"]}
+                        st.rerun()
+    with st.expander("备份与恢复",expanded=False):
         st.caption(f"本浏览器现有{len(archive['chats'])}/{MAX_CHATS}段独立对话。"
                    "每段对话分别保留Dify上下文。")
-        current=active_chat(archive)
-        title=st.text_input("当前对话名称",value=current["title"],
-                            max_chars=40,key="lovis_title_"+current["id"])
-        if st.button("保存名称",use_container_width=True):
-            save_active_chat()
-            rename_chat(archive,current["id"],title)
-            st.rerun()
-        confirm_delete=st.checkbox("确认删除当前对话（不可撤销）",
-                                   key="lovis_delete_confirm_"+current["id"])
-        if st.button("删除当前对话",disabled=not confirm_delete,
-                     use_container_width=True):
-            delete_chat(archive,current["id"])
-            apply_active_chat(active_chat(archive))
-            st.session_state.lovis_archive_dirty=True
-            st.rerun()
         st.divider()
         st.caption("浏览器会自动保存，但清除站点数据、换设备或隐私模式可能导致记录丢失。")
         if st.session_state.get("lovis_storage_note"):
@@ -350,6 +412,9 @@ with st.sidebar:
     approved=st.checkbox("同意将本轮文字提问和脱敏计算摘要发送至Dify Cloud",value=False)
     st.caption("MAT、原始波形、文件名及SHA-256不发送至Dify；CSV运行数值仅在另行授权后发送。")
     st.caption("公开实验台研究原型，不能代替现场故障确诊。")
+
+if st.session_state.get("lovis_action_target"):
+    edit_history_dialog()
 
 try:
     api_key=str(st.secrets.get("DIFY_API_KEY","") or os.environ.get("DIFY_API_KEY","")).strip()
