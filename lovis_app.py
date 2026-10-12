@@ -14,7 +14,6 @@ import re
 import uuid
 from pathlib import Path
 from streamlit_local_storage import LocalStorage
-from lovis_history import STORAGE_KEY as LEGACY_STORAGE_KEY
 from lovis_conversations import (
     STORAGE_KEY_V2, MAX_CHATS, new_store, active_chat, add_chat,
     switch_chat, rename_chat, delete_chat, sync_active, validate_store, to_json_bytes
@@ -100,6 +99,10 @@ def apply_active_chat(chat:dict) -> None:
     st.session_state.lovis_tool_events = list(chat["recent_tool_events"])
     st.session_state.lovis_trace_source = chat["recent_tool_trace_source"]
     st.session_state.pop("lovis_analysis",None)  # MAT data and waveforms are ephemeral.
+    # Requiring an explicit new attachment prevents samples from one
+    # motor being silently treated as part of a different diagnosis.
+    st.session_state["lovis_data_source"]="暂不关联"
+    st.session_state.pop("lovis_mat_upload",None)
 
 
 def save_active_chat() -> None:
@@ -227,20 +230,17 @@ try:
         stored_archive=lovis_storage.getItem(STORAGE_KEY_V2)
         if stored_archive is not None:
             try:
+                # The browser key is unchanged: accept either older v1 or v2.
+                import json
+                source_schema=(json.loads(stored_archive) if isinstance(stored_archive,str)
+                               else stored_archive).get("schema")
                 restore_archive(stored_archive)
-            except (ValueError,TypeError) as exc:
-                st.session_state.lovis_storage_note="已保存的多会话记录有误："+str(exc)
-                st.session_state.lovis_archive_restored=True
-        else:
-            legacy=lovis_storage.getItem(LEGACY_STORAGE_KEY)
-            if legacy is not None:
-                try:
-                    restore_archive(legacy)
+                if source_schema == 1:
                     st.session_state.lovis_archive_dirty=True
-                    st.session_state.lovis_storage_note="旧版单会话记录已迁移到多会话列表。"
-                except (ValueError,TypeError) as exc:
-                    st.session_state.lovis_storage_note="旧版备份读取失败："+str(exc)
-                    st.session_state.lovis_archive_restored=True
+                    st.session_state.lovis_storage_note="旧版对话记录已自动迁移到多会话列表。"
+            except (ValueError,TypeError,AttributeError) as exc:
+                st.session_state.lovis_storage_note="已保存的会话记录有误："+str(exc)
+                st.session_state.lovis_archive_restored=True
     if st.session_state.get("lovis_archive_dirty",False):
         # Build full validated JSON, then write one atomic archive.
         lovis_storage.setItem(STORAGE_KEY_V2,validate_store(st.session_state.lovis_chat_store))
@@ -345,7 +345,7 @@ with st.sidebar:
                    "原始MAT和波形不会随会话记录保存。")
     st.divider()
     st.markdown("**关联数据（可选）**")
-    source=st.radio("数据来源",["暂不关联","CWRU内置示例","上传MAT文件"],label_visibility="collapsed")
+    source=st.radio("数据来源",["暂不关联","CWRU内置示例","上传MAT文件"],label_visibility="collapsed",key="lovis_data_source")
     if source=="CWRU内置示例":
         manifest,samples,err=load_demo_once()
         if err:
@@ -363,7 +363,7 @@ with st.sidebar:
             identity="demo-"+str(current_meta["number"])
             st.caption("所选类别为实验台标签，不是模型预测。")
     elif source=="上传MAT文件":
-        f=st.file_uploader("选择振动MAT",type=["mat"])
+        f=st.file_uploader("选择振动MAT",type=["mat"],key="lovis_mat_upload")
         # CWRU Normal Baseline 97-100 is recorded at 48 kHz.
         # Filename is only a hint: non-official or modified uploads still require confirmation.
         known_cwru_normal=bool(f is not None and re.fullmatch(r"(97|98|99|100)\.mat",f.name,re.I))
