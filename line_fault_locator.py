@@ -181,7 +181,9 @@ def locate_faults(events, topology, signal_dictionary, alarm_dictionary, config)
             continue
         station = device if device in station_by_id or device == "PLC01" else next((s for s, ds in devices.items() if device in ds), device)
         component = next(iter(c["components"])) if len(c["components"]) == 1 else (None if device == station else device)
-        results.append({"station_id": station, "component_id": component,
+        results.append({"ranking_scope": "shared_controller" if station == "PLC01" else "station",
+                        "station_id": station, "component_id": component,
+                        "associated_component_ids": sorted(c["components"]),
                         "ranking_score": round(c["score"], 3), "score_breakdown": dict(sorted(c["breakdown"].items())),
                         "supporting_event_ids": sorted(c["support"]), "contradicting_event_ids": sorted(c["contradict"]),
                         "possible_propagation_paths": c["paths"]})
@@ -192,8 +194,18 @@ def locate_faults(events, topology, signal_dictionary, alarm_dictionary, config)
     if validation_errors:
         warnings.extend(validation_errors)
     source = sorted({str(e.get("data_source", "unspecified")) for e in sorted_events})
+    station_candidates = [c for c in results if c["station_id"] != "PLC01"]
+    shared_candidates = [c for c in results if c["station_id"] == "PLC01"]
+    for rank, candidate in enumerate(station_candidates, 1):
+        candidate["station_rank"] = rank
+    for rank, candidate in enumerate(shared_candidates, 1):
+        candidate["shared_rank"] = rank
     return {"line_id": line_id, "incident_id": (sorted_events[0]["cycle_id"] if sorted_events else None),
             "algorithm_version": ALGORITHM_VERSION, "data_source": source, "diagnosis_status": status,
-            "candidates": results, "missing_data": sorted(set(missing)), "warnings": warnings,
+            # Keep `candidates` unchanged for backwards compatibility. These typed
+            # lists are views over the same rule scores, not a new scoring model.
+            "candidates": results, "station_candidates": station_candidates,
+            "shared_candidates": shared_candidates,
+            "missing_data": sorted(set(missing)), "warnings": warnings,
             "verified_fault": False}
 

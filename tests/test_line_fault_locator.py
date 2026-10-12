@@ -3,7 +3,8 @@ from pathlib import Path
 from line_fault_locator import locate_faults
 
 ROOT = Path(__file__).parent
-def load(name): return json.loads((ROOT / name).read_text(encoding="utf-8"))
+CONFIG_ROOT = ROOT.parent / "config" / "v40" if (ROOT.parent / "config" / "v40").exists() else ROOT
+def load(name): return json.loads((CONFIG_ROOT / name).read_text(encoding="utf-8"))
 TOPO, SIG, ALARM, CFG = (load(n) for n in ("topology.json", "signal_dictionary.json", "alarm_dictionary.json", "locator_config.json"))
 
 def ev(i, device, signal, value, unit, sec, alarm=None, quality="good"):
