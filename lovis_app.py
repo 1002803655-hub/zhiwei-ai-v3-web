@@ -510,16 +510,4 @@ if analysis and analysis.get("identity")==identity:
     with st.container():
         st.markdown("### 📊 按需生成的分析证据")
         show_evidence(analysis,st.session_state.get("lovis_tool_events",[]))
-if st.session_state.get("lovis_messages"):
-    events=st.session_state.get("lovis_tool_events",[])
-    with st.expander("🔎 Agent执行证据（只显示可核验事件）",expanded=False):
-        st.caption("Dify内部知识、趋势和参数工具是否被调用，只以API工具事件和Dify日志为准；此处不展示模型隐含推理过程。")
-        if analysis and analysis.get("identity")==identity:
-            st.write("✅ 网页后端Python振动分析：用户请求触发；不是Dify工具调用。")
-        if events:
-            st.caption("证据来源："+st.session_state.get("lovis_trace_source","Dify提供的工具记录"))
-            for n,event in enumerate(events,1):
-                st.write(f"✅ Dify已记录的工具调用 {n}："+event)
-        else:
-            st.write("当前轮Dify服务API未提供可核验的工具记录（不等于没有执行）；请到Dify运行日志核对，网页不会凭回答文字伪造调用。")
 st.caption("🔗 现有已验收的V3.0网页继续保持运行：https://zhiwei-ai-v3-web.streamlit.app")
