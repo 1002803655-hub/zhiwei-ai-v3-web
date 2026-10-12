@@ -53,6 +53,16 @@ class HomeTests(unittest.TestCase):
             self.assertEqual(app.session_state["lovis_chat_store"]["active_id"],original)
             self.assertEqual(app.session_state["lovis_conversation_id"],"")
 
+    def test_sidebar_history_selection_has_legible_theme_aware_text(self):
+        # Regression: selected primary buttons used white foreground, while
+        # the previous CSS erased their background on light sidebar themes.
+        source=Path(app_path()).read_text(encoding="utf-8")
+        self.assertNotIn('type="primary" if active else "secondary"',source)
+        self.assertIn('type="secondary"',source)
+        self.assertIn('st-key-lovis_chat_row_active_',source)
+        self.assertIn('color:var(--text-color,#1f2937) !important',source)
+        self.assertIn('opacity:1 !important',source)
+
     def test_each_chat_has_ellipsis_rename_and_delete_menu(self):
         # Verify history actions are attached to their own chat ID, not a
         # global management panel (which could delete the wrong conversation).
