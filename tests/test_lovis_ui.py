@@ -35,6 +35,24 @@ class HomeTests(unittest.TestCase):
         self.assertTrue(len(app.chat_input)>=1)
         self.assertFalse(any("浏览器自动保存暂不可用" in w.message for w in app.warning))
 
+    def test_sidebar_can_create_and_switch_independent_chats(self):
+        with patch("streamlit_local_storage.LocalStorage", FakeBrowserStorage):
+            app=AppTest.from_file(app_path(),default_timeout=25).run()
+            self.assertEqual(len(app.exception),0)
+            original=app.session_state["lovis_chat_store"]["active_id"]
+            create=next(btn for btn in app.button if btn.label=="＋ 开始新对话")
+            app=create.click().run()
+            self.assertEqual(len(app.exception),0)
+            archive=app.session_state["lovis_chat_store"]
+            self.assertEqual(len(archive["chats"]),2)
+            second=archive["active_id"]
+            self.assertNotEqual(original,second)
+            choose=next(btn for btn in app.button if btn.key=="lovis_select_"+original)
+            app=choose.click().run()
+            self.assertEqual(len(app.exception),0)
+            self.assertEqual(app.session_state["lovis_chat_store"]["active_id"],original)
+            self.assertEqual(app.session_state["lovis_conversation_id"],"")
+
     def test_reopening_page_restores_browser_chat(self):
         from lovis_history import STORAGE_KEY
         backup=build_snapshot(
