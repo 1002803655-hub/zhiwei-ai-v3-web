@@ -24,6 +24,8 @@ ALLOWED_ROUTES = set(EXPERT_ENV) | {"human_review", "none"}
 MANAGER_DECISION_FIELDS = {"next_expert", "reason", "candidate_station_id", "verified_fault"}
 MANAGER_SUMMARY_FIELDS = {"summary", "verified_fault"}
 EXPERT_FIELDS = {"status", "subsystem", "observations", "recommended_checks", "evidence_event_ids", "verified_fault"}
+EXPERT_OPTIONAL_FIELDS = {"assessment"}
+MAX_EXPERT_CALLS = 2
 ROUTE_COMPONENTS = {
     "robot_expert": {"S02-RB01", "S02-VG01"},
     "motion_control_expert": {"S02-SV01"},
@@ -75,6 +77,8 @@ class DifyClient:
             raise IntegrationError("Management Agent JSON must be an object")
         if stage == "dispatch":
             _validate_decision(obj)
+        elif stage == "followup":
+            _validate_followup_decision(obj)
         elif stage == "summarize":
             _validate_summary(obj)
         return obj
@@ -120,12 +124,36 @@ def _validate_decision(obj: dict[str, Any]) -> None:
 def _validate_summary(obj: dict[str, Any]) -> None:
     if set(obj) != MANAGER_SUMMARY_FIELDS or not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
         raise IntegrationError("Management Agent summary JSON has missing or unsupported fields")
+    if not re.search(r"[\u4e00-\u9fff]", obj["summary"]):
+        raise IntegrationError("Management Agent summary must be in Simplified Chinese")
     if obj.get("verified_fault") is not False:
         raise IntegrationError("Management Agent summary cannot set verified_fault")
 
 
+def _validate_followup_decision(obj: dict[str, Any]) -> None:
+    required = {"next_action", "next_expert", "reason", "supporting_event_ids", "verified_fault"}
+    if set(obj) != required:
+        raise IntegrationError("Management Agent followup JSON has missing or unsupported fields")
+    if obj.get("next_action") not in {"finish", "call_expert", "human_review"}:
+        raise IntegrationError("Management Agent followup action is invalid")
+    if not isinstance(obj.get("reason"), str) or not obj["reason"].strip():
+        raise IntegrationError("Management Agent followup reason is required")
+    if not isinstance(obj.get("supporting_event_ids"), list) or any(not isinstance(i, str) or not i for i in obj["supporting_event_ids"]):
+        raise IntegrationError("Management Agent followup supporting_event_ids must be a string list")
+    action, expert = obj["next_action"], obj["next_expert"]
+    if action == "call_expert":
+        if not isinstance(expert, str) or expert not in ALLOWED_ROUTES - {"human_review", "none"}:
+            raise IntegrationError("Management Agent followup expert route is invalid")
+        if not obj["supporting_event_ids"]:
+            raise IntegrationError("Expert followup requires supporting event IDs")
+    elif expert is not None or obj["supporting_event_ids"]:
+        raise IntegrationError("Non-expert followup must not select an expert or cite routing evidence")
+    if obj.get("verified_fault") is not False:
+        raise IntegrationError("Management Agent cannot set verified_fault")
+
+
 def _validate_expert_result(obj: dict[str, Any]) -> None:
-    if set(obj) != EXPERT_FIELDS:
+    if not EXPERT_FIELDS <= set(obj) or set(obj) - EXPERT_FIELDS - EXPERT_OPTIONAL_FIELDS:
         raise IntegrationError("Expert workflow JSON has missing or unsupported fields")
     if obj.get("status") != "candidate_review" or not isinstance(obj.get("subsystem"), str) or not obj["subsystem"].strip():
         raise IntegrationError("Expert workflow JSON has invalid status or subsystem")
@@ -134,6 +162,8 @@ def _validate_expert_result(obj: dict[str, Any]) -> None:
             raise IntegrationError(f"Expert workflow field {key} must be a list of non-empty strings")
     if obj.get("verified_fault") is not False:
         raise IntegrationError("Expert workflow cannot set verified_fault")
+    if "assessment" in obj and obj["assessment"] not in {"abnormal", "normal", "inconclusive"}:
+        raise IntegrationError("Expert workflow assessment is invalid")
 
 
 def _route_compatible(route: str, station_id: str, payload: dict[str, Any]) -> bool:
@@ -170,57 +200,169 @@ def _evidence_payload(locator_result: dict[str, Any], events: list[dict[str, Any
     }
 
 
+def _route_evidence(locator_payload: dict[str, Any]) -> dict[str, list[str]]:
+    """Evidence allowlist by expert, derived only from locator-supported raw event IDs."""
+    event_by_id = {str(event.get("event_id")): event for event in locator_payload.get("supporting_and_contradicting_events", [])}
+    allowed = {route: set() for route in ROUTE_COMPONENTS}
+    for candidate in locator_payload.get("station_candidates", []):
+        supported = set(candidate.get("supporting_event_ids", []))
+        for event_id in supported:
+            event = event_by_id.get(str(event_id))
+            if not event:
+                continue
+            for route, components in ROUTE_COMPONENTS.items():
+                if event.get("device_id") in components:
+                    allowed[route].add(str(event_id))
+    return {route: sorted(ids) for route, ids in allowed.items()}
+
+
+def _validate_followup_authorization(decision: dict[str, Any], calls: list[dict[str, Any]],
+                                     route_evidence: dict[str, list[str]]) -> str | None:
+    """Backend authorization gate. A model decision alone never grants a route."""
+    try:
+        _validate_followup_decision(decision)
+    except (IntegrationError, AttributeError, TypeError):
+        return "invalid_followup_decision"
+    if decision["next_action"] != "call_expert":
+        return None
+    expert = decision["next_expert"]
+    already_called = {call.get("expert") for call in calls}
+    if len(calls) >= MAX_EXPERT_CALLS:
+        return "expert_call_limit_reached"
+    if expert in already_called:
+        return "repeated_expert_rejected"
+    if expert not in route_evidence or not route_evidence[expert]:
+        return "followup_without_locator_evidence"
+    if not set(decision["supporting_event_ids"]) <= set(route_evidence[expert]):
+        return "followup_evidence_not_in_locator_allowlist"
+    return None
+
+
+def _expert_conflicts(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    conflicts = []
+    completed = [call for call in calls if call.get("status") == "succeeded" and isinstance(call.get("result"), dict)]
+    for index, first in enumerate(completed):
+        a = first["result"]
+        if a.get("assessment") not in {"normal", "abnormal"}:
+            continue
+        for second in completed[index + 1:]:
+            b = second["result"]
+            shared = sorted(set(a.get("evidence_event_ids", [])) & set(b.get("evidence_event_ids", [])))
+            if shared and b.get("assessment") in {"normal", "abnormal"} and a["assessment"] != b["assessment"]:
+                conflicts.append({"experts": [first["expert"], second["expert"]], "evidence_event_ids": shared,
+                                  "assessments": [a["assessment"], b["assessment"]]})
+    return conflicts
+
+
 def run_management_cycle(locator_result: dict[str, Any], events: list[dict[str, Any]], dify: Any) -> dict[str, Any]:
-    """Ask manager to select at most one expert; call it and request a summary."""
+    """Run a bounded, evidence-authorized manager/expert feedback cycle."""
     payload = _evidence_payload(locator_result, events)
+    empty = {"expert_call": None, "expert_result": None, "expert_calls": [],
+             "management_summary": None, "locator": payload, "verified_fault": False}
     if payload["diagnosis_status"] == "insufficient_data" or not payload["station_candidates"]:
-        return {"status": "human_review", "decision": {"next_expert": "human_review", "reason": "定位证据不足，暂不自动调用专家。"},
-                "expert_call": None, "expert_result": None, "management_summary": None, "locator": payload}
+        return {**empty, "status": "human_review", "decision": {"next_expert": "human_review", "reason": "定位证据不足，暂不自动调用专家。"}}
     try:
         decision = dify.manager("dispatch", payload)
     except IntegrationError as exc:
-        return {"status": "management_agent_unavailable", "decision": None, "expert_call": None,
-                "expert_result": None, "management_summary": None, "error": str(exc), "locator": payload}
+        return {**empty, "status": "management_agent_unavailable", "decision": None, "error": str(exc)}
     try:
         _validate_decision(decision)
     except (IntegrationError, AttributeError, TypeError):
-        return {"status": "invalid_agent_response", "decision": None, "expert_call": None,
-                "expert_result": None, "management_summary": None,
-                "error": "Management Agent dispatch schema validation failed", "locator": payload}
+        return {**empty, "status": "invalid_agent_response", "decision": None, "error": "Management Agent dispatch schema validation failed"}
     route = decision["next_expert"]
     if route not in {"human_review", "none"} and not _route_compatible(route, decision["candidate_station_id"], payload):
-        return {"status": "incompatible_agent_route", "decision": decision, "expert_call": None,
-                "expert_result": None, "management_summary": None,
-                "error": "Selected expert is incompatible with the chosen locator candidate", "locator": payload}
+        return {**empty, "status": "incompatible_agent_route", "decision": decision, "error": "Selected expert is incompatible with the chosen locator candidate"}
     if route in {"none", "human_review"}:
-        return {"status": "awaiting_review", "decision": decision, "expert_call": None,
-                "expert_result": None, "management_summary": None, "locator": payload}
-    expert_input = {"locator": payload, "selected_route": route, "decision_reason": decision.get("reason", "")}
+        return {**empty, "status": "awaiting_review", "decision": decision}
+
+    route_evidence = _route_evidence(payload)
+    if route not in route_evidence or not route_evidence[route]:
+        return {**empty, "status": "incompatible_agent_route", "decision": decision,
+                "error": "Selected expert has no locator-supported event evidence"}
+    calls: list[dict[str, Any]] = []
+
+    def call_expert(expert: str, reason: str, evidence_ids: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+        trace = {"expert": expert, "call_reason": reason, "supporting_event_ids": list(evidence_ids),
+                 "result": None, "status": "running"}
+        calls.append(trace)
+        expert_input = {"locator": payload, "selected_route": expert, "decision_reason": reason,
+                        "supporting_event_ids": list(evidence_ids)}
+        try:
+            result = dify.expert(expert, expert_input)
+            _validate_expert_result(result)
+            original_ids = {str(e.get("event_id")) for e in payload["supporting_and_contradicting_events"]}
+            if not set(result["evidence_event_ids"]) <= original_ids:
+                raise IntegrationError("Expert cited evidence absent from the locator result")
+            trace["result"], trace["status"] = result, "succeeded"
+            return result, None
+        except IntegrationError as exc:
+            trace["status"], trace["error"] = "failed", str(exc)
+            return None, str(exc)
+        except (TypeError, AttributeError):
+            trace["status"], trace["error"] = "failed", "Expert workflow response failed schema validation"
+            return None, trace["error"]
+
+    first_evidence = route_evidence[route]
+    first_result, first_error = call_expert(route, decision["reason"], first_evidence)
+    if first_result is None:
+        status = "invalid_expert_response" if "schema" in (first_error or "") or "cited evidence" in (first_error or "") else "expert_unavailable"
+        return {**empty, "status": status, "decision": decision,
+                "expert_call": {"route": route, "called": calls[0]["status"] == "running"},
+                "expert_calls": calls, "error": first_error}
+
+    available = {expert: ids for expert, ids in route_evidence.items() if ids and expert != route}
+    followup_payload = {"locator": payload, "first_expert_result": first_result,
+                        "experts_called": [route], "evidence_gaps": payload.get("missing_data", []),
+                        "allowed_experts": available, "max_expert_calls": MAX_EXPERT_CALLS,
+                        "expert_calls_remaining": MAX_EXPERT_CALLS - len(calls)}
+    followup_decision = None
+    cycle_status = "completed"
     try:
-        expert_result = dify.expert(route, expert_input)
+        followup_decision = dify.manager("followup", followup_payload)
+        rejection = _validate_followup_authorization(followup_decision, calls, route_evidence)
+        if rejection:
+            cycle_status = rejection
+        elif followup_decision["next_action"] == "human_review":
+            cycle_status = "human_review"
+        elif followup_decision["next_action"] == "call_expert":
+            second_route = followup_decision["next_expert"]
+            _, second_error = call_expert(second_route, followup_decision["reason"], followup_decision["supporting_event_ids"])
+            if second_error:
+                cycle_status = "partially_completed"
     except IntegrationError as exc:
-        return {"status": "expert_unavailable", "decision": decision, "expert_call": {"route": route, "called": False},
-                "expert_result": None, "management_summary": None, "error": str(exc), "locator": payload}
-    try:
-        _validate_expert_result(expert_result)
-    except (IntegrationError, AttributeError, TypeError):
-        return {"status": "invalid_expert_response", "decision": decision, "expert_call": {"route": route, "called": True},
-                "expert_result": None, "management_summary": None,
-                "error": "Expert workflow failed schema validation", "locator": payload}
-    summary_input = {"locator": payload, "decision": decision, "expert_route": route, "expert_result": expert_result}
+        cycle_status = "invalid_followup_decision" if "followup" in str(exc).lower() else "followup_unavailable"
+        followup_decision = {"error": str(exc)}
+
+    conflicts = _expert_conflicts(calls)
+    if conflicts:
+        cycle_status = "human_review_conflict"
+    summary_input = {"locator": payload, "decision": decision, "followup_decision": followup_decision,
+                     "expert_calls": calls, "expert_conflicts": conflicts, "cycle_status": cycle_status}
+    summary = None
+    summary_error = None
     try:
         summary = dify.manager("summarize", summary_input)
-    except IntegrationError as exc:
-        return {"status": "summary_unavailable", "decision": decision, "expert_call": {"route": route, "called": True},
-                "expert_result": expert_result, "management_summary": None, "error": str(exc), "locator": payload}
-    try:
         _validate_summary(summary)
-    except (IntegrationError, AttributeError, TypeError):
-        return {"status": "invalid_agent_response", "decision": decision, "expert_call": {"route": route, "called": True},
-                "expert_result": expert_result, "management_summary": None,
-                "error": "Expert or management summary failed schema validation", "locator": payload}
-    return {"status": "completed", "decision": decision, "expert_call": {"route": route, "called": True},
-            "expert_result": expert_result, "management_summary": summary, "locator": payload}
+    except IntegrationError as exc:
+        summary_error = str(exc)
+        if cycle_status == "completed":
+            cycle_status = "summary_unavailable"
+    except (AttributeError, TypeError):
+        summary_error = "Management summary failed schema validation"
+        if cycle_status == "completed":
+            cycle_status = "invalid_agent_response"
+
+    succeeded = [c for c in calls if c["status"] == "succeeded"]
+    first = calls[0] if calls else None
+    result = {**empty, "status": cycle_status, "decision": decision, "followup_decision": followup_decision,
+              "expert_call": {"route": route, "called": bool(first and first["status"] == "succeeded")},
+              "expert_result": first_result, "expert_calls": calls, "management_summary": summary,
+              "expert_conflicts": conflicts}
+    if summary_error:
+        result["error"] = summary_error
+    if cycle_status == "partially_completed":
+        result["error"] = next((c.get("error") for c in calls if c["status"] == "failed"), "Second expert failed")
+    return result
 
 
 def analyze(events, topology, signal_dictionary, alarm_dictionary, config, dify=None):
