@@ -82,6 +82,7 @@ class IntegrationTests(unittest.TestCase):
             None,
             {"next_expert":"robot_expert","reason":"x","candidate_station_id":"S02","verified_fault":True},
             {"next_expert":"robot_expert","reason":"x"},
+            {"next_expert":"robot_expert","reason":"x","candidate_station_id":"S02","verified_fault":False,"ranking_score":9999},
         ):
             class Bad(FakeDify):
                 def manager(self, stage, payload): return decision
