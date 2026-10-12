@@ -1,0 +1,85 @@
+app:
+  description: Lovis V4.0 motion-control specialist experiment. Reviews supplied evidence; does not run the locator or confirm faults.
+  icon: ⚙️
+  icon_background: '#E0E7FF'
+  mode: workflow
+  name: Lovis V4.0 Motion Control Expert (Experiment)
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features: {}
+  graph:
+    edges:
+      - data: {sourceType: start, targetType: llm}
+        id: start-to-motion-review
+        source: start
+        sourceHandle: source
+        target: motion_review
+        targetHandle: target
+        type: custom
+      - data: {sourceType: llm, targetType: end}
+        id: motion-review-to-end
+        source: motion_review
+        sourceHandle: source
+        target: end
+        targetHandle: target
+        type: custom
+    nodes:
+      - id: start
+        type: custom
+        data:
+          type: start
+          title: Incident payload
+          desc: Structured locator results and linked event evidence.
+          variables:
+            - {variable: incident_payload, label: Incident payload JSON, type: paragraph, required: true, max_length: 20000, options: []}
+        position: {x: 80, y: 282}
+        positionAbsolute: {x: 80, y: 282}
+        sourcePosition: right
+        targetPosition: left
+        width: 243
+        height: 90
+        selected: false
+      - id: motion_review
+        type: custom
+        data:
+          type: llm
+          title: Motion-control evidence review
+          desc: Reviews servo and shared PLC clues without a diagnosis verdict.
+          context: {enabled: false, variable_selector: []}
+          memory: {query_prompt_template: '', role_prefix: {assistant: '', user: ''}, window: {enabled: false, size: 10}}
+          model: {provider: openai, name: gpt-4o-mini, mode: chat, completion_params: {temperature: 0.1, top_p: 1, max_tokens: 1000}}
+          prompt_template:
+            - role: system
+              text: |-
+                You are the Lovis V4.0 motion-control expert, prompt contract v1.2 for event schema lovis-v40-event-1.0 and rule set AL-01-exp-1.1. Review only supplied servo, motion, and PLC event evidence and the existing locator candidate. Do not calculate or alter ranking. Do not call a candidate a confirmed fault and do not describe experimental rule points as probabilities. Return JSON only with status="candidate_review", subsystem, observations, recommended_checks, evidence_event_ids, assessment, and verified_fault=false. Set assessment to exactly abnormal, normal, or inconclusive based only on the cited supplied evidence; use inconclusive when evidence does not support a direction. If evidence is insufficient, say so.
+            - role: user
+              text: '{{#start.incident_payload#}}'
+          vision: {enabled: false}
+          variables: []
+        position: {x: 390, y: 282}
+        positionAbsolute: {x: 390, y: 282}
+        sourcePosition: right
+        targetPosition: left
+        width: 310
+        height: 120
+        selected: false
+      - id: end
+        type: custom
+        data:
+          type: end
+          title: Structured review
+          desc: Returns the specialist response for management-agent summarization.
+          outputs:
+            - {variable: result_json, value_selector: [motion_review, text]}
+        position: {x: 780, y: 282}
+        positionAbsolute: {x: 780, y: 282}
+        sourcePosition: right
+        targetPosition: left
+        width: 243
+        height: 80
+        selected: false
+  rag_pipeline_variables: []
+version: '0.3.0'
+kind: app
+
