@@ -48,11 +48,32 @@ st.markdown("""
 .small-tag {font-size:0.8rem;color:#506987}
 [data-testid="stMetric"] {border:1px solid #e1e8f0;border-radius:10px;padding:9px}
 /* History row resembles ChatGPT: full-width title and discreet action dots. */
-div[class*="st-key-lovis_chat_row_"] {border-radius:0.55rem;padding:1px 2px}
-div[class*="st-key-lovis_chat_row_"]:hover {background:rgba(125,135,151,0.09)}
+div[class*="st-key-lovis_chat_row_"] {
+  border-radius:0.55rem;padding:1px 2px;
+}
+div[class*="st-key-lovis_chat_row_"]:hover {
+  background:rgba(125,135,151,0.12);
+}
+div[class*="st-key-lovis_chat_row_active_"] {
+  background:rgba(82,131,212,0.17);
+}
+div[class*="st-key-lovis_chat_row_active_"]:hover {
+  background:rgba(82,131,212,0.22);
+}
+/* The row title is always a secondary button: a primary button renders
+   white text that disappears when the custom background is transparent. */
 div[class*="st-key-lovis_chat_row_"] [data-testid="stButton"] button {
   text-align:left;justify-content:flex-start;overflow:hidden;
   border:0;background:transparent;box-shadow:none;
+  color:var(--text-color,#1f2937) !important;
+  opacity:1 !important;
+}
+div[class*="st-key-lovis_chat_row_"] [data-testid="stButton"] button * {
+  color:inherit !important;
+  opacity:1 !important;
+}
+div[class*="st-key-lovis_chat_row_active_"] [data-testid="stButton"] button {
+  font-weight:600;
 }
 div[class*="st-key-lovis_chat_row_"] [data-testid="stPopover"] button {
   opacity:0.06;min-height:2rem;padding:0.1rem 0.25rem;
@@ -334,13 +355,13 @@ with st.sidebar:
         active = (ch["id"] == archive["active_id"])
         # Each history row owns a small ellipsis action menu. On desktop it
         # appears on hover/focus; on touchscreens it is always visible.
-        with st.container(key="lovis_chat_row_"+ch["id"]):
+        with st.container(key="lovis_chat_row_"+("active_" if active else "")+ch["id"]):
             name_col,menu_col=st.columns([0.83,0.17],gap="small",vertical_alignment="center")
             with name_col:
                 label = ("▸ " if active else "") + ch["title"]
                 if st.button(label,key="lovis_select_"+ch["id"],
                              help="打开该历史对话",use_container_width=True,
-                             type="primary" if active else "secondary"):
+                             type="secondary"):
                     if not active:
                         activate_chat(ch["id"])
             with menu_col:
