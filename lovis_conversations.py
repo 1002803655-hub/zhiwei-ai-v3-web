@@ -16,7 +16,7 @@ from lovis_history import validate_snapshot as validate_legacy
 STORAGE_KEY_V2 = "lovis_v31_browser_history_v1"  # same browser slot; migrate schema 1 in place
 MAX_CHATS = 24
 MAX_MESSAGES = 60
-MAX_TEXT = 10000
+MAX_TEXT = 20000  # Dify responses may exceed 10k characters
 MAX_BYTES = 2_000_000
 MAX_TITLE = 40
 ID_RE = re.compile(r"[0-9a-f]{32}")
